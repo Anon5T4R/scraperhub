@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 import zipfile
 from pathlib import Path
 
@@ -20,7 +21,11 @@ def _bundled_ffmpeg() -> Path:
 
 
 def _ffmpeg_path() -> str | None:
-    """ffmpeg embutido ao lado do exe, ou do PATH, ou None."""
+    """ffmpeg embutido no exe, ao lado do exe, ou do PATH."""
+    if getattr(sys, "frozen", False):
+        embedded = Path(getattr(sys, "_MEIPASS", "")) / "ffmpeg.exe"
+        if embedded.is_file():
+            return str(embedded)
     bundled = _bundled_ffmpeg()
     if bundled.is_file():
         return str(bundled)

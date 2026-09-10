@@ -30,6 +30,14 @@ def _driver_cli() -> list[str] | None:
     return None
 
 
+def _bundled_browsers() -> Path | None:
+    """Pasta ms-playwright embutida no exe (PyInstaller), se houver."""
+    base = Path(getattr(sys, "_MEIPASS", "")) / "ms-playwright"
+    if base.is_dir() and any(base.glob("chromium*")):
+        return base
+    return None
+
+
 def _ensure_chromium(pw) -> None:
     """Garante que o Chromium existe; instala via driver CLI se faltar."""
     try:
@@ -38,6 +46,9 @@ def _ensure_chromium(pw) -> None:
             return
     except Exception:
         pass
+    # shell headless embutido nao aparece em executable_path mas serve
+    if _bundled_browsers() is not None:
+        return
     cmd = _driver_cli()
     if not cmd:
         raise ScraperError(
@@ -54,11 +65,16 @@ def _ensure_chromium(pw) -> None:
 def run(headless: bool = True) -> Iterator[BrowserContext]:
     """Soba um Chromium e entrega um contexto; fecha tudo ao sair.
 
-    No executavel (PyInstaller), os browsers ficam em pasta persistente ao
-    lado do exe e sao instalados automaticamente na primeira execucao.
+    No executavel (PyInstaller): usa os browsers EMBUTIDOS no exe
+    (ms-playwright empacotado); se ausentes, instala em pasta persistente ao
+    lado do exe na primeira execucao.
     """
     if getattr(sys, "frozen", False):
-        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(app_root() / "pw-browsers"))
+        bundled = _bundled_browsers()
+        if bundled is not None:
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(bundled)
+        else:
+            os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(app_root() / "pw-browsers"))
     with sync_playwright() as pw:
         _ensure_chromium(pw)
         try:

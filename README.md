@@ -65,19 +65,35 @@ O seletor ao lado do campo de URL permite forcar um scraper especifico
 (Auto / Espelho de site / E-book / Galeria); com "Auto" a deteccao e
 automatica.
 
-## Executavel (um arquivo so)
+## Executavel (um arquivo so, PORTATIL)
 
 ```powershell
+# requer ffmpeg.exe na raiz do projeto (baixado automaticamente em algum
+# download de video anterior, ou coloque manualmente) e o Chromium headless
+# instalado pelo Playwright (%LOCALAPPDATA%\ms-playwright)
 .venv\Scripts\pip install pyinstaller
-.venv\Scripts\python -m PyInstaller --noconfirm --onefile --name ScraperHub --add-data "web;web" run.py
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --onefile --name ScraperHub `
+  --add-data "web;web" `
+  --add-binary "ffmpeg.exe;." `
+  --add-data "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1234;ms-playwright/chromium_headless_shell-1234" `
+  --collect-all gallery_dl --collect-all gdown run.py
 ```
 
-Gera `dist\ScraperHub.exe` (autossuficiente: FastAPI + Playwright + yt-dlp).
-Dois cliques: sobe o servidor em 127.0.0.1:8765 e abre o navegador sozinho.
-Na primeira execucao instala o Chromium do Playwright em `pw-browsers\`
-ao lado do exe, se necessario. IMPORTANTE: ao rebuildar, apague `build\` e
-`dist\` antes (um exe travado por processo em execucao impede a
-sobrescrita e voce testa um build velho sem perceber).
+Gera `dist\ScraperHub.exe` (~240MB) com TUDO embutido: FastAPI + Playwright
++ yt-dlp + gallery-dl + gdown + Chromium headless + ffmpeg. Zero downloads
+ao abrir em outra maquina — so passe o exe. Dois cliques: sobe o servidor em
+127.0.0.1:8765 e abre o navegador sozinho. A extracao interna do onefile faz
+a abertura demorar ~15s a mais; e o preco do arquivo unico.
+
+NOTAS:
+- Ao rebuildar, apague `build\` e `dist\` antes (um exe travado por
+  processo em execucao impede a sobrescrita e voce testa um build velho sem
+  perceber).
+- O numero da revisao do Chromium (ex: 1234) muda a cada versao do
+  Playwright — confira o nome real da pasta em `%LOCALAPPDATA%\ms-playwright`
+  e ajuste o comando.
+- Sem rede nenhuma no build: o exe ainda baixa o Chromium/ffmpeg sozinho na
+  primeira execucao, se faltarem no pacote (fallback do codigo).
 
 ## Avisos
 
