@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScraperHub (uso pessoal/estudo)</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --accent: #4f8cff;
+    --text: #e6e8ec;
+    --muted: #8b93a1;
+    --border: #262b34;
+    --ok: #37c98b;
+    --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    padding: 24px 20px 8px;
+    max-width: 960px;
+    margin: 0 auto;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header .tag { color: var(--muted); font-size: 13px; }
+  main { max-width: 960px; margin: 0 auto; padding: 12px 20px 60px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 18px;
+  }
+  .hidden { display: none; }
+  label { font-size: 14px; color: var(--muted); }
+  input[type="url"] {
+    width: 100%;
+    background: #0c0e12;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 15px;
+  }
+  .row { display: flex; gap: 10px; align-items: center; }
+  .row.between { justify-content: space-between; }
+  .row input { flex: 1; }
+  button {
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .error { color: var(--err); font-size: 13px; }
+  .result-head { display: flex; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
+  .cover { width: 96px; border-radius: 10px; object-fit: cover; }
+  .result-meta h2 { margin: 0 0 4px; font-size: 18px; }
+  .controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 14px; }
+  .chapters {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 6px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .chapter { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 6px; border-radius: 6px; }
+  .chapter:hover { background: #12151b; }
+  .task { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px; }
+  .task-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #2a303b; }
+  .badge.running { background: #1d3a5c; color: #9cc4ff; }
+  .badge.done { background: #14382a; color: var(--ok); }
+  .badge.error { background: #3a1b1b; color: var(--err); }
+  .bar { height: 8px; background: #0c0e12; border-radius: 999px; overflow: hidden; }
+  .fill { height: 100%; background: var(--accent); transition: width .3s ease; }
+  .fill.done { background: var(--ok); }
+  .fill.error { background: var(--err); }
+  .log {
+    margin: 10px 0 0;
+    background: #0c0e12;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    max-height: 120px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>ScraperHub <span class="tag">(uso pessoal/estudo)</span></h1>
+</header>
+<main>
+  <section class="card">
+    <label for="url">Cole o link e o scraper certo sera detectado automaticamente</label>
+    <div class="row" style="margin-top:8px">
+      <input id="url" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
+      <button id="analyze">Analisar</button>
+    </div>
+    <p id="status" class="muted" style="margin:10px 0 0"></p>
+  </section>
+
+  <section id="result" class="card hidden"></section>
+
+  <section class="card">
+    <div class="row between">
+      <h2 style="margin:0;font-size:17px">Tarefas</h2>
+      <button id="refresh" class="ghost">Atualizar</button>
+    </div>
+    <div id="tasks"></div>
+  </section>
+</main>
+
+<script>
+const api = {
+  async request(path, options) {
+    const res = await fetch(path, options);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || ("Erro " + res.status));
+    return data;
+  },
+  post(path, body) {
+    return this.request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  },
+  get(path) {
+    return this.request(path, {});
+  },
+};
+
+const STATUS_LABEL = { pending: "Na fila", running: "Em andamento", done: "Concluida", error: "Erro" };
+const $ = (id) => document.getElementById(id);
+
+function el(tag, opts = {}, children = []) {
+  const node = document.createElement(tag);
+  if (opts.class) node.className = opts.class;
+  if (opts.text !== undefined) node.textContent = opts.text;
+  if (opts.attrs) for (const [key, value] of Object.entries(opts.attrs)) node.setAttribute(key, value);
+  for (const child of children) node.appendChild(child);
+  return node;
+}
+
+function setStatus(message) {
+  $("status").textContent = message;
+}
+
+function formatDuration(seconds) {
+  if (!seconds) return "";
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n) => String(n).padStart(2, "0");
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
+let current = null;
+
+async function analyze() {
+  const url = $("url").value.trim();
+  const result = $("result");
+  if (!url) { setStatus("Cole um link primeiro."); return; }
+  setStatus("Analisando...");
+  result.classList.add("hidden");
+  result.replaceChildren();
+  try {
+    const detected = await api.post("/api/detect", { url });
+    const info = await api.post("/api/info", { url });
+    current = { url, info, kind: detected.kind, scraperId: detected.scraper_id };
+    setStatus(`Scraper detectado: ${detected.label} (${detected.kind})`);
+    renderResult(result, info, detected.kind);
+    result.classList.remove("hidden");
+  } catch (err) {
+    current = null;
+    setStatus("Erro: " + err.message);
+  }
+}
+
+function renderResult(container, info, kind) {
+  container.replaceChildren();
+  const head = el("div", { class: "result-head" });
+  if (info.cover) head.appendChild(el("img", { class: "cover", attrs: { src: info.cover, alt: "" } }));
+  const meta = el("div", { class: "result-meta" });
+  meta.appendChild(el("h2", { text: info.title || "Sem titulo" }));
+  meta.appendChild(el("p", { class: "muted", text: `${(info.items || []).length} item(ns) disponivel(is)` }));
+  if (info.duration) meta.appendChild(el("p", { class: "muted", text: "Duracao: " + formatDuration(info.duration) }));
+  head.appendChild(meta);
+  container.appendChild(head);
+  container.appendChild(kind === "manga" ? renderManga(info) : renderVideo(info));
+}
+
+function renderManga(info) {
+  const wrap = el("div");
+  const controls = el("div", { class: "controls" });
+  const selectAll = el("label", { class: "check" });
+  const selectAllBox = el("input", { attrs: { type: "checkbox" } });
+  selectAll.append(selectAllBox, el("span", { text: "Selecionar todos" }));
+  const cbz = el("label", { class: "check" });
+  const cbzBox = el("input", { attrs: { type: "checkbox" } });
+  cbz.append(cbzBox, el("span", { text: "Empacotar em CBZ" }));
+  const button = el("button", { text: "Baixar selecionados" });
+  controls.append(selectAll, cbz, button);
+
+  const list = el("div", { class: "chapters" });
+  const boxes = [];
+  for (const item of info.items || []) {
+    const row = el("label", { class: "chapter" });
+    const box = el("input", { attrs: { type: "checkbox", value: item.id } });
+    row.append(box, el("span", { text: item.label }));
+    list.appendChild(row);
+    boxes.push(box);
+  }
+  selectAllBox.addEventListener("change", () => boxes.forEach((box) => { box.checked = selectAllBox.checked; }));
+  button.addEventListener("click", () => {
+    const ids = boxes.filter((box) => box.checked).map((box) => box.value);
+    if (!ids.length) { setStatus("Selecione ao menos um capitulo."); return; }
+    startDownload(ids, { cbz: cbzBox.checked });
+  });
+  wrap.append(controls, list);
+  return wrap;
+}
+
+function renderVideo(info) {
+  const wrap = el("div", { class: "controls" });
+  const label = info.is_playlist ? `Baixar playlist (${(info.items || []).length} itens)` : "Baixar video";
+  const button = el("button", { text: label });
+  button.addEventListener("click", () => {
+    startDownload((info.items || []).map((item) => item.id), {});
+  });
+  wrap.appendChild(button);
+  return wrap;
+}
+
+async function startDownload(items, options) {
+  if (!current) return;
+  try {
+    const res = await api.post("/api/download", { url: current.url, items, options });
+    setStatus("Tarefa criada: " + res.task_id.slice(0, 8));
+    await pollTasks();
+  } catch (err) {
+    setStatus("Erro: " + err.message);
+  }
+}
+
+function renderTasks(tasks) {
+  const container = $("tasks");
+  container.replaceChildren();
+  if (!tasks.length) {
+    container.appendChild(el("p", { class: "muted", text: "Nenhuma tarefa ainda." }));
+    return;
+  }
+  tasks.slice().reverse().forEach((task) => container.appendChild(renderTask(task)));
+}
+
+function renderTask(task) {
+  const card = el("div", { class: "task" });
+  const top = el("div", { class: "task-top" });
+  top.append(
+    el("span", { class: `badge ${task.status}`, text: STATUS_LABEL[task.status] || task.status }),
+    el("span", { class: "muted", text: task.id.slice(0, 8) })
+  );
+  const bar = el("div", { class: "bar" });
+  const fill = el("div", { class: `fill ${task.status}` });
+  fill.style.width = Math.max(0, Math.min(100, task.progress || 0)) + "%";
+  bar.appendChild(fill);
+  card.append(top, bar);
+  if (task.current_item) card.appendChild(el("p", { class: "muted", text: task.current_item }));
+  if (task.error) card.appendChild(el("p", { class: "error", text: task.error }));
+  card.appendChild(el("pre", { class: "log", text: (task.log || []).join("\n") }));
+  return card;
+}
+
+async function pollTasks() {
+  try {
+    renderTasks(await api.get("/api/tasks"));
+  } catch (err) {
+    /* mantem a ultima lista em caso de falha temporaria */
+  }
+}
+
+$("analyze").addEventListener("click", analyze);
+$("url").addEventListener("keydown", (event) => { if (event.key === "Enter") analyze(); });
+$("refresh").addEventListener("click", pollTasks);
+pollTasks();
+setInterval(pollTasks, 1500);
+</script>
+</body>
+</html>
