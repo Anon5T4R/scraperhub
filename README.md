@@ -51,6 +51,11 @@ baixar o navegador usado pelo scraper de manga.
   Nunca e detectado automaticamente; use o seletor "Espelho de site" na UI
   (modo forcado). Opcoes `depth` (padrao 2) e `max_pages` (padrao 15). O
   HTML nao e reescrito: os links permanecem absolutos.
+- **Anime (serie)** (`animestream`): series/temporadas em animeq.cloud (MP4
+  direto), animesdigital.org (HLS via ffmpeg) e otakubr.com (apenas listagem;
+  o player Blogger do site e protegido e o download falha com aviso claro).
+  Cole o link da pagina do anime: a UI lista todos os episodios com
+  selecao multipla (por temporada no otakubr, `S1E01`).
 - **Video** (`video`): fallback generico para qualquer URL http(s), usando
   `yt-dlp` (API Python embutida no executavel). O `ffmpeg` e baixado
   automaticamente ao lado do exe na primeira vez que salvar um video

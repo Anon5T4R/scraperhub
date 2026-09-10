@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .base import Scraper, ScraperError
+from .animestream import AnimeStreamScraper
 from .ebook import EbookScraper
 from .filehost import FileHostScraper
 from .gallery import GalleryScraper
@@ -18,6 +19,7 @@ REGISTRY: list[Scraper] = [
     GalleryScraper(),
     EbookScraper(),
     FileHostScraper(),
+    AnimeStreamScraper(),
     MirrorScraper(),
     VideoScraper(),
 ]

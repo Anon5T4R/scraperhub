@@ -246,16 +246,26 @@ function renderGeneric(info, kind) {
 }
 
 function renderManga(info) {
+  return renderSelectableList(info, [
+    { id: "cbz", label: "Empacotar em CBZ" },
+  ], "capitulo");
+}
+
+// Lista com checkboxes + "Selecionar todos" (manga, episodios etc.)
+function renderSelectableList(info, options, unit) {
   const wrap = el("div");
   const controls = el("div", { class: "controls" });
   const selectAll = el("label", { class: "check" });
   const selectAllBox = el("input", { attrs: { type: "checkbox" } });
   selectAll.append(selectAllBox, el("span", { text: "Selecionar todos" }));
-  const cbz = el("label", { class: "check" });
-  const cbzBox = el("input", { attrs: { type: "checkbox" } });
-  cbz.append(cbzBox, el("span", { text: "Empacotar em CBZ" }));
+  const optionBoxes = options.map((opt) => {
+    const label = el("label", { class: "check" });
+    const box = el("input", { attrs: { type: "checkbox" } });
+    label.append(box, el("span", { text: opt.label }));
+    return { id: opt.id, box };
+  });
   const button = el("button", { text: "Baixar selecionados" });
-  controls.append(selectAll, cbz, button);
+  controls.append(selectAll, ...optionBoxes.map((o) => o.box.closest("label")), button);
 
   const list = el("div", { class: "chapters" });
   const boxes = [];
@@ -269,19 +279,26 @@ function renderManga(info) {
   selectAllBox.addEventListener("change", () => boxes.forEach((box) => { box.checked = selectAllBox.checked; }));
   button.addEventListener("click", () => {
     const ids = boxes.filter((box) => box.checked).map((box) => box.value);
-    if (!ids.length) { setStatus("Selecione ao menos um capitulo."); return; }
-    startDownload(ids, { cbz: cbzBox.checked });
+    if (!ids.length) { setStatus(`Selecione ao menos um ${unit}.`); return; }
+    const opts = {};
+    for (const { id, box } of optionBoxes) opts[id] = box.checked;
+    startDownload(ids, opts);
   });
   wrap.append(controls, list);
   return wrap;
 }
 
 function renderVideo(info) {
+  const items = info.items || [];
+  // serie de episodios (animestream): lista selecionavel
+  if (items.length > 1 && !info.is_playlist) {
+    return renderSelectableList(info, [], "episodio");
+  }
   const wrap = el("div", { class: "controls" });
-  const label = info.is_playlist ? `Baixar playlist (${(info.items || []).length} itens)` : "Baixar video";
+  const label = info.is_playlist ? `Baixar playlist (${items.length} itens)` : "Baixar video";
   const button = el("button", { text: label });
   button.addEventListener("click", () => {
-    startDownload((info.items || []).map((item) => item.id), {});
+    startDownload(items.map((item) => item.id), {});
   });
   wrap.appendChild(button);
   return wrap;
