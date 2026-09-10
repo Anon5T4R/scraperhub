@@ -32,15 +32,33 @@ baixar o navegador usado pelo scraper de manga.
   Aceita qualquer host que contenha "mangafire" e tambem URLs no formato
   `*/title/{slug}` ou `*/title/{slug}/chapter/{id}` quando nenhum outro scraper
   reconhece o host. A primeira carga de uma pagina demora ~10s (renderizacao).
+- **Manga WordPress** (`wpmanga`): sites WordPress server-rendered cuja home
+  lista capitulos como links `/manga/{slug}-chapter-N` (ex:
+  w2.chainsmokercat.website). HTTP puro, rapido.
 - **Video** (`video`): fallback generico para qualquer URL http(s), usando
-  `yt-dlp` como backend. Instale com `pip install yt-dlp` (fora do venv ou no
-  PATH) e reinicie o servidor.
+  `yt-dlp` (API Python embutida no executavel). O `ffmpeg` e baixado
+  automaticamente ao lado do exe na primeira vez que salvar um video
+  (build oficial BtbN win64 gpl); sem ele, baixa o melhor arquivo unico.
+
+## Executavel (um arquivo so)
+
+```powershell
+.venv\Scripts\pip install pyinstaller
+.venv\Scripts\python -m PyInstaller --noconfirm --onefile --name ScraperHub --add-data "web;web" run.py
+```
+
+Gera `dist\ScraperHub.exe` (autossuficiente: FastAPI + Playwright + yt-dlp).
+Dois cliques: sobe o servidor em 127.0.0.1:8765 e abre o navegador sozinho.
+Na primeira execucao instala o Chromium do Playwright em `pw-browsers\`
+ao lado do exe, se necessario. IMPORTANTE: ao rebuildar, apague `build\` e
+`dist\` antes (um exe travado por processo em execucao impede a
+sobrescrita e voce testa um build velho sem perceber).
 
 ## Avisos
 
 - **DRM**: videos protegidos por DRM (Widevine/criptografia) nao sao
-  suportados por enquanto; o download falha com uma mensagem amigavel e o
-  suporte esta pendente de autorizacao.
+  suportados; o download falha com mensagem amigavel. O ScraperHub nao
+  implementa burlar DRM sob nenhuma circunstancia.
 - Downloads de manga sao salvos em `downloads/` (pasta ignorada pelo git).
 - Uso pessoal/estudo apenas: respeite os termos de uso e os direitos autorais
   dos sites acessados.

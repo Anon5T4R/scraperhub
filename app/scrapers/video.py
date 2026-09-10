@@ -1,19 +1,71 @@
-"""Scraper de video generico usando yt-dlp como backend."""
+"""Scraper de video generico usando yt-dlp (API Python embutida no exe)."""
 from __future__ import annotations
 
-import json
-import re
 import shutil
-import subprocess
-from collections import deque
+import zipfile
+from pathlib import Path
 from typing import Any
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
+import httpx
 
-PROGRESS_RE = re.compile(r"\[download\]\s+([\d.]+)%")
-DRM_HINTS = ("drm", "protected", "widevine", "encrypted")
+from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, app_root
+
+DRM_HINTS = ("drm", "protected", "widevine", "encrypted", "clearkey")
 MAX_PLAYLIST = 50
 OUTPUT_TEMPLATE = "%(title)s.%(ext)s"
+FORMAT_MERGED = "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b"
+FORMAT_SINGLE = "b"
+FFMPEG_ZIP_URL = (
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
+    "ffmpeg-master-latest-win64-gpl.zip"
+)
+
+
+def _bundled_ffmpeg() -> Path:
+    return app_root() / "ffmpeg.exe"
+
+
+def _ffmpeg_path() -> str | None:
+    """ffmpeg embutido ao lado do exe, ou do PATH, ou None."""
+    bundled = _bundled_ffmpeg()
+    if bundled.is_file():
+        return str(bundled)
+    return shutil.which("ffmpeg")
+
+
+def _ensure_ffmpeg() -> str | None:
+    """Garante um ffmpeg; baixa o build oficial se nao existir."""
+    path = _ffmpeg_path()
+    if path:
+        return path
+    target = _bundled_ffmpeg()
+    try:
+        with httpx.Client(follow_redirects=True, timeout=600) as client:
+            with client.stream("GET", FFMPEG_ZIP_URL) as response:
+                response.raise_for_status()
+                zip_path = target.with_suffix(".zip")
+                with zip_path.open("wb") as handle:
+                    for chunk in response.iter_bytes():
+                        handle.write(chunk)
+        with zipfile.ZipFile(zip_path) as archive:
+            member = next(m for m in archive.namelist() if m.endswith("/bin/ffmpeg.exe"))
+            target.write_bytes(archive.read(member))
+        zip_path.unlink(missing_ok=True)
+        return str(target)
+    except Exception:
+        # sem rede/arquivo: segue sem ffmpeg (qualidade reduzida)
+        return None
+
+
+def _friendly(text: str) -> str:
+    low = (text or "").lower()
+    if any(hint in low for hint in DRM_HINTS):
+        return (
+            "Este video e protegido por DRM (Widevine/criptografia). "
+            "O ScraperHub nao realiza download de conteudo com DRM."
+        )
+    cleaned = (text or "erro desconhecido").strip().replace("\n", " ")
+    return f"yt-dlp falhou: {cleaned[-300:]}"
 
 
 class VideoScraper(Scraper):
@@ -26,18 +78,21 @@ class VideoScraper(Scraper):
     def match(self, url: str) -> bool:
         return url.startswith(("http://", "https://"))
 
+    # -- interface -----------------------------------------------------
+
     def get_info(self, url: str) -> dict:
-        ytdlp = self._require_ytdlp()
-        command = [ytdlp, "-J", "--flat-playlist", "--no-warnings", url]
-        proc = subprocess.run(
-            command, capture_output=True, text=True, encoding="utf-8", errors="replace"
-        )
-        if proc.returncode != 0:
-            raise ScraperError(self._friendly(proc.stderr or proc.stdout))
+        import yt_dlp
+
+        options = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist"}
         try:
-            data = json.loads(proc.stdout)
-        except ValueError as exc:
-            raise ScraperError("yt-dlp retornou um JSON invalido.") from exc
+            with yt_dlp.YoutubeDL(options) as ydl:
+                data = ydl.extract_info(url, download=False)
+        except yt_dlp.utils.DownloadError as exc:
+            raise ScraperError(_friendly(str(exc))) from exc
+        except Exception as exc:  # rede, extrator quebrado etc.
+            raise ScraperError(f"Falha ao analisar o video: {exc}") from exc
+        if not data:
+            raise ScraperError("Nao foi possivel extrair informacoes deste video.")
         return self._metadata(data)
 
     def download(
@@ -47,49 +102,51 @@ class VideoScraper(Scraper):
         progress_cb: ProgressCb,
         options: dict | None = None,
     ) -> None:
-        ytdlp = self._require_ytdlp()
+        import yt_dlp
+
         DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
-        command = [
-            ytdlp,
-            "-o",
-            str(DOWNLOADS_DIR / OUTPUT_TEMPLATE),
-            "--merge-output-format",
-            "mp4",
-            "--newline",
-            "--no-warnings",
-        ]
+        progress_cb(0, "Verificando ffmpeg (primeira vez baixa automaticamente)...")
+        ffmpeg = _ensure_ffmpeg()
+        yt_options: dict[str, Any] = {
+            "outtmpl": str(DOWNLOADS_DIR / OUTPUT_TEMPLATE),
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            "progress_hooks": [self._hook(progress_cb)],
+        }
+        if ffmpeg:
+            # com ffmpeg: melhores faixas separadas mescladas em mp4
+            yt_options["format"] = FORMAT_MERGED
+            yt_options["merge_output_format"] = "mp4"
+            yt_options["ffmpeg_location"] = str(Path(ffmpeg).parent)
+        else:
+            # sem ffmpeg: melhor arquivo unico (pode ter qualidade menor)
+            yt_options["format"] = FORMAT_SINGLE
+            progress_cb(0, "ffmpeg indisponivel: baixando arquivo unico (qualidade reduzida)")
         if item_ids:
-            command += ["--playlist-items", ",".join(item_ids)]
-        command.append(url)
-        proc = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
-        tail: deque[str] = deque(maxlen=20)
-        last = 0
-        if proc.stdout is not None:
-            for raw in proc.stdout:
-                line = raw.rstrip()
-                if not line:
-                    continue
-                tail.append(line)
-                match = PROGRESS_RE.search(line)
-                if match:
-                    percent = int(float(match.group(1)))
-                    if percent != last:
-                        last = percent
-                        progress_cb(percent, f"Baixando... {percent}%")
-                else:
-                    progress_cb(last, line[:200])
-        proc.wait()
-        if proc.returncode != 0:
-            raise ScraperError(self._friendly("\n".join(tail)))
+            yt_options["playlist_items"] = ",".join(item_ids)
+
+        try:
+            with yt_dlp.YoutubeDL(yt_options) as ydl:
+                ydl.download([url])
+        except yt_dlp.utils.DownloadError as exc:
+            raise ScraperError(_friendly(str(exc))) from exc
         progress_cb(100, "Download concluido")
+
+    # -- helpers -------------------------------------------------------
+
+    @staticmethod
+    def _hook(progress_cb: ProgressCb):  # noqa: ANN202 - callback do yt-dlp
+        def hook(status: dict) -> None:
+            if status.get("status") != "downloading":
+                return
+            total = status.get("total_bytes") or status.get("total_bytes_estimate")
+            done = status.get("downloaded_bytes") or 0
+            percent = int(done * 100 / total) if total else 0
+            filename = (status.get("filename") or "").rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+            progress_cb(percent, f"Baixando {filename}... {percent}%")
+
+        return hook
 
     @staticmethod
     def _metadata(data: dict[str, Any]) -> dict:
@@ -118,23 +175,3 @@ class VideoScraper(Scraper):
             "duration": data.get("duration"),
             "is_playlist": False,
         }
-
-    @staticmethod
-    def _require_ytdlp() -> str:
-        path = shutil.which("yt-dlp")
-        if not path:
-            raise ScraperError(
-                "yt-dlp nao encontrado. Instale com 'pip install yt-dlp' e reinicie o servidor."
-            )
-        return path
-
-    @staticmethod
-    def _friendly(text: str) -> str:
-        low = (text or "").lower()
-        if any(hint in low for hint in DRM_HINTS):
-            return (
-                "Este video parece ser protegido por DRM (Widevine/criptografia). "
-                "DRM nao e suportado por enquanto e esta pendente de autorizacao."
-            )
-        cleaned = (text or "erro desconhecido").strip()
-        return f"yt-dlp falhou: {cleaned[-300:]}"

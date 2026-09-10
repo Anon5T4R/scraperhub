@@ -7,3 +7,5 @@ srv.out.log
 srv.err.log
 out.log
 err.log
+ffmpeg.exe
+*.zip
