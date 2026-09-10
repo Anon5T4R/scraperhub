@@ -132,4 +132,12 @@ class EbookScraper(Scraper):
     def _filename(url: str) -> str:
         path = urlparse(url).path
         name = unquote(path.rsplit("/", 1)[-1]) if path else ""
-        return sanitize(name) or "ebook"
+        name = sanitize(name) or "ebook"
+        # extensao dupla do Gutenberg (ex: 1342.epub.noimages -> 1342.epub):
+        # se o sufixo final nao e uma extensao valida, corta na que for
+        parts = name.split(".")
+        if len(parts) > 2:
+            for index in range(1, len(parts)):
+                if ".".join(parts[index:]) in EXTENSIONS:
+                    return ".".join(parts[: index + 1])
+        return name
