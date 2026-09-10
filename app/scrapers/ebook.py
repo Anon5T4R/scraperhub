@@ -134,10 +134,10 @@ class EbookScraper(Scraper):
         name = unquote(path.rsplit("/", 1)[-1]) if path else ""
         name = sanitize(name) or "ebook"
         # extensao dupla do Gutenberg (ex: 1342.epub.noimages -> 1342.epub):
-        # se o sufixo final nao e uma extensao valida, corta na que for
+        # se o sufixo final nao e uma extensao valida, corta na primeira que for
         parts = name.split(".")
-        if len(parts) > 2:
+        if len(parts) > 2 and f".{parts[-1]}" not in EBOOK_EXTS:
             for index in range(1, len(parts)):
-                if ".".join(parts[index:]) in EBOOK_EXTS:
+                if f".{parts[index]}" in EBOOK_EXTS:
                     return ".".join(parts[: index + 1])
         return name
