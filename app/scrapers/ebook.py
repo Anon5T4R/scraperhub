@@ -138,6 +138,6 @@ class EbookScraper(Scraper):
         parts = name.split(".")
         if len(parts) > 2:
             for index in range(1, len(parts)):
-                if ".".join(parts[index:]) in EXTENSIONS:
+                if ".".join(parts[index:]) in EBOOK_EXTS:
                     return ".".join(parts[: index + 1])
         return name
