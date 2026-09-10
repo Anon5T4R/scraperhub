@@ -4,9 +4,11 @@ from __future__ import annotations
 from .base import Scraper, ScraperError
 from .mangafire import MangaFireScraper
 from .video import VideoScraper
+from .wpmanga import WpMangaScraper
 
 REGISTRY: list[Scraper] = [
     MangaFireScraper(),
+    WpMangaScraper(),
     VideoScraper(),
 ]
 
