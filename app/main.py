@@ -1,20 +1,36 @@
 """Aplicacao FastAPI do ScraperHub: detecta o scraper e gerencia tarefas."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .scrapers import Scraper, ScraperError, detect
+from .scrapers import Scraper, ScraperError, detect, normalize_url
 from .tasks import TaskManager
 
-WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+
+def _web_dir() -> Path:
+    """Pasta web/: dentro do pacote onefile (sys._MEIPASS) ou do projeto."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "web"  # type: ignore[attr-defined]
+    return Path(__file__).resolve().parents[1] / "web"
+
+
+WEB_DIR = _web_dir()
 
 app = FastAPI(title="ScraperHub", version="0.1.0")
 manager = TaskManager(max_workers=2)
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    """Erro inesperado: devolve o detalhe em vez de um 500 mudo."""
+    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
 
 class UrlRequest(BaseModel):
@@ -32,6 +48,7 @@ class DownloadRequest(BaseModel):
 
 
 def _resolve(url: str) -> Scraper:
+    url = normalize_url(url)
     scraper = detect(url)
     if scraper is None:
         raise HTTPException(status_code=404, detail="Nenhum scraper reconheceu esta URL.")
@@ -48,9 +65,10 @@ def api_detect(payload: UrlRequest) -> dict:
 @app.post("/api/info")
 def api_info(payload: UrlRequest) -> dict:
     """Retorna metadados e itens do conteudo da URL."""
-    scraper = _resolve(payload.url)
+    url = normalize_url(payload.url)
+    scraper = _resolve(url)
     try:
-        info = scraper.get_info(payload.url)
+        info = scraper.get_info(url)
     except ScraperError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"scraper_id": scraper.id, "kind": scraper.kind, **info}
@@ -59,13 +77,14 @@ def api_info(payload: UrlRequest) -> dict:
 @app.post("/api/download")
 def api_download(payload: DownloadRequest) -> dict:
     """Cria uma tarefa de download em background e retorna o id."""
-    scraper = _resolve(payload.url)
+    url = normalize_url(payload.url)
+    scraper = _resolve(url)
 
     def run(task_id: str) -> None:
         def progress_cb(progress: int, message: str) -> None:
             manager.update_progress(task_id, progress=progress, current_item=message, log=message)
 
-        scraper.download(payload.url, payload.items, progress_cb, payload.options)
+        scraper.download(url, payload.items, progress_cb, payload.options)
 
     return {"task_id": manager.create(run)}
 

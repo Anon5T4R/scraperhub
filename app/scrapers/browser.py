@@ -1,12 +1,16 @@
 """Utilitarios Playwright para scrapers de sites renderizados por JS."""
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
-from .base import ScraperError
+from .base import ScraperError, app_root
 
 DEFAULT_TIMEOUT_MS = 30000
 VIEWPORT = {"width": 1366, "height": 900}
@@ -16,11 +20,51 @@ USER_AGENT = (
 )
 
 
+def _driver_cli() -> list[str] | None:
+    """Comando do CLI do driver Playwright empacotado (node + cli.js)."""
+    base = Path(getattr(sys, "_MEIPASS", "")) / "playwright" / "driver"
+    node = base / "node.exe"
+    cli = base / "package" / "cli.js"
+    if node.is_file() and cli.is_file():
+        return [str(node), str(cli)]
+    return None
+
+
+def _ensure_chromium(pw) -> None:
+    """Garante que o Chromium existe; instala via driver CLI se faltar."""
+    try:
+        exe = Path(pw.chromium.executable_path)
+        if exe.is_file():
+            return
+    except Exception:
+        pass
+    cmd = _driver_cli()
+    if not cmd:
+        raise ScraperError(
+            "Chromium do Playwright nao encontrado. Rode "
+            "'python -m playwright install chromium' e tente novamente."
+        )
+    try:
+        subprocess.run(cmd + ["install", "chromium"], check=True, timeout=600)
+    except Exception as exc:
+        raise ScraperError(f"Falha ao instalar o Chromium automaticamente: {exc}") from exc
+
+
 @contextmanager
 def run(headless: bool = True) -> Iterator[BrowserContext]:
-    """Sobe um Chromium e entrega um contexto; fecha tudo ao sair."""
+    """Soba um Chromium e entrega um contexto; fecha tudo ao sair.
+
+    No executavel (PyInstaller), os browsers ficam em pasta persistente ao
+    lado do exe e sao instalados automaticamente na primeira execucao.
+    """
+    if getattr(sys, "frozen", False):
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(app_root() / "pw-browsers"))
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless)
+        _ensure_chromium(pw)
+        try:
+            browser = pw.chromium.launch(headless=headless)
+        except Exception as exc:
+            raise ScraperError(f"Nao foi possivel iniciar o Chromium: {exc}") from exc
         context = browser.new_context(
             user_agent=USER_AGENT,
             locale="pt-BR",

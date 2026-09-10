@@ -11,8 +11,17 @@ REGISTRY: list[Scraper] = [
 ]
 
 
+def normalize_url(url: str) -> str:
+    """Normaliza a URL: trim + prefixo https:// quando o usuario omitiu."""
+    url = url.strip()
+    if url and "://" not in url:
+        url = "https://" + url
+    return url
+
+
 def detect(url: str) -> Scraper | None:
     """Retorna o primeiro scraper que aceita a URL, ou None."""
+    url = normalize_url(url)
     for scraper in REGISTRY:
         if scraper.match(url):
             return scraper

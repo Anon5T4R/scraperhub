@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 downloads/
+dist/
+srv.out.log
+srv.err.log
+out.log
+err.log

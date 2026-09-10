@@ -1,13 +1,22 @@
 """Classe base, tipos e erros comuns aos scrapers do ScraperHub."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Callable, Literal
 
 Kind = Literal["manga", "video"]
 ProgressCb = Callable[[int, str], None]
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+def app_root() -> Path:
+    """Raiz do app: pasta do exe (PyInstaller) ou do projeto (dev)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+PROJECT_ROOT = app_root()
 DOWNLOADS_DIR = PROJECT_ROOT / "downloads"
 
 
