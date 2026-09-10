@@ -49,6 +49,14 @@
     padding: 12px 14px;
     font-size: 15px;
   }
+  select {
+    background: #0c0e12;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 10px;
+    font-size: 14px;
+  }
   .row { display: flex; gap: 10px; align-items: center; }
   .row.between { justify-content: space-between; }
   .row input { flex: 1; }
@@ -115,6 +123,12 @@
     <label for="url">Cole o link e o scraper certo sera detectado automaticamente</label>
     <div class="row" style="margin-top:8px">
       <input id="url" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
+      <select id="force" title="Forcar um scraper especifico">
+        <option value="">Auto</option>
+        <option value="mirror">Espelho de site</option>
+        <option value="ebook">E-book</option>
+        <option value="gallery">Galeria</option>
+      </select>
       <button id="analyze">Analisar</button>
     </div>
     <p id="status" class="muted" style="margin:10px 0 0"></p>
@@ -181,15 +195,16 @@ let current = null;
 
 async function analyze() {
   const url = $("url").value.trim();
+  const force = $("force").value || null;
   const result = $("result");
   if (!url) { setStatus("Cole um link primeiro."); return; }
   setStatus("Analisando...");
   result.classList.add("hidden");
   result.replaceChildren();
   try {
-    const detected = await api.post("/api/detect", { url });
-    const info = await api.post("/api/info", { url });
-    current = { url, info, kind: detected.kind, scraperId: detected.scraper_id };
+    const detected = await api.post("/api/detect", { url, force });
+    const info = await api.post("/api/info", { url, force });
+    current = { url, force, info, kind: detected.kind, scraperId: detected.scraper_id };
     setStatus(`Scraper detectado: ${detected.label} (${detected.kind})`);
     renderResult(result, info, detected.kind);
     result.classList.remove("hidden");
@@ -209,7 +224,25 @@ function renderResult(container, info, kind) {
   if (info.duration) meta.appendChild(el("p", { class: "muted", text: "Duracao: " + formatDuration(info.duration) }));
   head.appendChild(meta);
   container.appendChild(head);
-  container.appendChild(kind === "manga" ? renderManga(info) : renderVideo(info));
+  if (kind === "manga") container.appendChild(renderManga(info));
+  else if (kind === "video") container.appendChild(renderVideo(info));
+  else container.appendChild(renderGeneric(info, kind));
+}
+
+function renderGeneric(info, kind) {
+  const labels = {
+    image: "Baixar galeria",
+    ebook: "Baixar e-book",
+    file: "Baixar arquivo",
+    site: "Espelhar site",
+  };
+  const wrap = el("div", { class: "controls" });
+  const button = el("button", { text: labels[kind] || "Baixar" });
+  button.addEventListener("click", () => {
+    startDownload((info.items || []).map((item) => item.id), {});
+  });
+  wrap.appendChild(button);
+  return wrap;
 }
 
 function renderManga(info) {
@@ -257,7 +290,7 @@ function renderVideo(info) {
 async function startDownload(items, options) {
   if (!current) return;
   try {
-    const res = await api.post("/api/download", { url: current.url, items, options });
+    const res = await api.post("/api/download", { url: current.url, items, options, force: current.force });
     setStatus("Tarefa criada: " + res.task_id.slice(0, 8));
     await pollTasks();
   } catch (err) {

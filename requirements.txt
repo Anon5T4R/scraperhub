@@ -3,4 +3,7 @@ uvicorn
 httpx
 beautifulsoup4
 lxml
-playwrightyt-dlp
+playwright
+yt-dlp
+gallery-dl
+gdown

@@ -2,13 +2,23 @@
 from __future__ import annotations
 
 from .base import Scraper, ScraperError
+from .ebook import EbookScraper
+from .filehost import FileHostScraper
+from .gallery import GalleryScraper
 from .mangafire import MangaFireScraper
+from .mirror import MirrorScraper
 from .video import VideoScraper
 from .wpmanga import WpMangaScraper
 
+# Ordem CRITICA: scrapers especificos antes dos genericos; `video` e o
+# fallback final (aceita qualquer URL http). `mirror` so entra via force.
 REGISTRY: list[Scraper] = [
     MangaFireScraper(),
     WpMangaScraper(),
+    GalleryScraper(),
+    EbookScraper(),
+    FileHostScraper(),
+    MirrorScraper(),
     VideoScraper(),
 ]
 

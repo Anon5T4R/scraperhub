@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .scrapers import Scraper, ScraperError, detect, normalize_url
+from .scrapers import Scraper, ScraperError, detect, get_scraper, normalize_url
 from .tasks import TaskManager
 
 
@@ -34,9 +34,10 @@ async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
 
 
 class UrlRequest(BaseModel):
-    """Corpo com uma unica URL."""
+    """Corpo com uma unica URL e o scraper forcado opcional."""
 
     url: str = Field(min_length=1)
+    force: str | None = None
 
 
 class DownloadRequest(BaseModel):
@@ -45,10 +46,16 @@ class DownloadRequest(BaseModel):
     url: str = Field(min_length=1)
     items: list[str] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)
+    force: str | None = None
 
 
-def _resolve(url: str) -> Scraper:
+def _resolve(url: str, force: str | None = None) -> Scraper:
     url = normalize_url(url)
+    if force:
+        scraper = get_scraper(force)
+        if scraper is None:
+            raise HTTPException(status_code=404, detail=f"Scraper desconhecido: {force}")
+        return scraper
     scraper = detect(url)
     if scraper is None:
         raise HTTPException(status_code=404, detail="Nenhum scraper reconheceu esta URL.")
@@ -57,8 +64,8 @@ def _resolve(url: str) -> Scraper:
 
 @app.post("/api/detect")
 def api_detect(payload: UrlRequest) -> dict:
-    """Detecta o scraper adequado para a URL."""
-    scraper = _resolve(payload.url)
+    """Detecta o scraper adequado para a URL (ou o forcado informado)."""
+    scraper = _resolve(payload.url, payload.force)
     return {"scraper_id": scraper.id, "kind": scraper.kind, "label": scraper.label}
 
 
@@ -66,7 +73,7 @@ def api_detect(payload: UrlRequest) -> dict:
 def api_info(payload: UrlRequest) -> dict:
     """Retorna metadados e itens do conteudo da URL."""
     url = normalize_url(payload.url)
-    scraper = _resolve(url)
+    scraper = _resolve(url, payload.force)
     try:
         info = scraper.get_info(url)
     except ScraperError as exc:
@@ -78,7 +85,7 @@ def api_info(payload: UrlRequest) -> dict:
 def api_download(payload: DownloadRequest) -> dict:
     """Cria uma tarefa de download em background e retorna o id."""
     url = normalize_url(payload.url)
-    scraper = _resolve(url)
+    scraper = _resolve(url, payload.force)
 
     def run(task_id: str) -> None:
         def progress_cb(progress: int, message: str) -> None:

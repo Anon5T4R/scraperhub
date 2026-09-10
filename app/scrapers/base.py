@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Literal
 
-Kind = Literal["manga", "video"]
+Kind = Literal["manga", "video", "image", "ebook", "file", "site"]
 ProgressCb = Callable[[int, str], None]
 
 

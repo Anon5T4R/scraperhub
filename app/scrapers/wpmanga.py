@@ -1,9 +1,15 @@
-"""Scraper de mangas em sites WordPress server-rendered.
+"""Scraper de mangas/comics em sites WordPress server-rendered.
 
 Funciona com sites cuja home lista os capitulos como links `/manga/{slug}`
 e cujas paginas de capitulo trazem as imagens dentro do artigo
 (`.entry-content` / `article` / `main`). Confirmado em
 w2.chainsmokercat.website (289 capitulos listados na home, sem paginacao).
+
+Alem do padrao `/manga/{slug}-chapter-N`, aceita tambem:
+- Madara: `/manga/{slug}/chapter/{qualquer}` e `/manga/{slug}/{capitulo}/`;
+- ReadAllComics: `/comic/{slug}/{capitulo}/`.
+O numero do capitulo cai para o primeiro numero do ultimo segmento da URL
+quando o padrao `chapter-...` nao aparece.
 """
 from __future__ import annotations
 
@@ -17,9 +23,25 @@ from bs4 import BeautifulSoup
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .mangafire_parse import image_extension, make_cbz, sanitize
 
-CHAPTER_HREF_RE = re.compile(r"/manga/[^/]*chapter-[\d]+(?:-[\d]+)?/?$", re.IGNORECASE)
-CHAPTER_NUM_RE = re.compile(r"chapter-([\d]+(?:-[\d]+)?)/?$", re.IGNORECASE)
-CONTENT_SELECTORS = (".entry-content img", "article img", "main img")
+CHAPTER_HREF_RE = re.compile(
+    r"(?:"
+    r"/manga/[^/]*chapter-[\d]+(?:-[\d]+)?"
+    r"|/manga/[^/]+/chapter/[^/?#]+"
+    r"|/manga/[^/]+/[^/?#]+"
+    r"|/comic/[^/]+/[^/?#]+"
+    r"|/[^/]*chapter-[\d]+(?:-[\d]+)?"
+    r")/?$",
+    re.IGNORECASE,
+)
+CHAPTER_NUM_RE = re.compile(r"chapter[-/]([\d]+(?:[-.][\d]+)?)", re.IGNORECASE)
+ANY_NUM_RE = re.compile(r"(\d+(?:[-.][\d]+)?)")
+CONTENT_SELECTORS = (
+    ".reading-content img",
+    "#chapterContent img",
+    ".entry-content img",
+    "article img",
+    "main img",
+)
 SKIP_IMG_RE = re.compile(r"kofi|ko-fi|cup-border|logo|avatar|banner|ads", re.IGNORECASE)
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -37,7 +59,11 @@ class WpMangaScraper(Scraper):
 
     def match(self, url: str) -> bool:
         path = (urlparse(url).path or "").strip("/")
-        if "/manga/" in f"/{path}":
+        full = f"/{path}"
+        if "/manga/" in full or "/comic/" in full:
+            return True
+        # formato ReadAllComics: /{slug}-chapter-N/ (ou /chapter-N) na raiz
+        if re.search(r"[-/]chapter-\d+", full, re.IGNORECASE):
             return True
         # home do site (sem caminho): aceita e valida na analise
         return path == ""
@@ -86,10 +112,11 @@ class WpMangaScraper(Scraper):
 
     @staticmethod
     def _label(href: str, text: str) -> str:
-        match = CHAPTER_NUM_RE.search(href)
+        tail = href.rstrip("/").rsplit("/", 1)[-1]
+        match = CHAPTER_NUM_RE.search(href) or ANY_NUM_RE.search(tail)
         if match:
             return f"Cap. {match.group(1).replace('-', '.')}"
-        return sanitize(text.strip()) or href.rsplit("/", 1)[-1]
+        return sanitize(text.strip()) or tail or href
 
     # -- interface -----------------------------------------------------
 
@@ -104,12 +131,12 @@ class WpMangaScraper(Scraper):
             title = self._site_title(soup, urlparse(home).netloc)
             seen: set[str] = set()
             items: list[dict] = []
-            for anchor in soup.select('a[href*="/manga/"]'):
+            for anchor in soup.select('a[href*="/manga/"], a[href*="/comic/"]'):
                 href = anchor.get("href") or ""
-                absolute = urljoin(home, href)
+                absolute = urljoin(home, href).split("?")[0].split("#")[0]
                 if not CHAPTER_HREF_RE.search(absolute):
                     continue
-                chapter_url = absolute.split("?")[0].rstrip("/")
+                chapter_url = absolute.rstrip("/")
                 if chapter_url in seen:
                     continue
                 seen.add(chapter_url)
