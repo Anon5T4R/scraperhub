@@ -6,6 +6,7 @@ amigavel: o ScraperHub nao burla protecao.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -41,7 +42,11 @@ class EbookScraper(Scraper):
         parsed = urlparse(url)
         if "force=ebook" in (parsed.query or "").lower():
             return True
-        return (parsed.path or "").lower().endswith(EBOOK_EXTS)
+        path = (parsed.path or "").lower()
+        if path.endswith(EBOOK_EXTS):
+            return True
+        # extensao seguida de sufixo (Gutenberg: 1342.epub.noimages)
+        return bool(re.search(r"\.(epub|pdf|mobi|azw3|fb2)\.", path))
 
     def get_info(self, url: str) -> dict:
         if self._is_direct(url):
