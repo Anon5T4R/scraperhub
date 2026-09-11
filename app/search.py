@@ -55,7 +55,13 @@ def save_sites(urls: list[str]) -> list[str]:
 
 
 def search_all(term: str) -> tuple[list[dict], dict[str, str]]:
-    """Busca o termo em todos os sites; retorna (resultados, erros por host)."""
+    """Busca o termo em todos os sites; retorna (resultados, erros por host).
+
+    Filtra resultados irrelevantes (sites que retornam qualquer coisa),
+    mas mantem a lista crua se o filtro remover tudo.
+    """
+    from .discovery import relevante
+
     sites = load_sites()
     results: list[dict] = []
     errors: dict[str, str] = {}
@@ -72,7 +78,10 @@ def search_all(term: str) -> tuple[list[dict], dict[str, str]]:
                 if item["url"] not in seen:
                     seen.add(item["url"])
                     results.append(item)
-    return results, errors
+    relevantes = [
+        r for r in results if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)
+    ]
+    return (relevantes or results), errors
 
 
 def _search_site(home: str, term: str) -> list[dict]:
