@@ -103,11 +103,17 @@ class AnimeStreamScraper(Scraper):
 
     @staticmethod
     def _episode_num(url: str) -> str:
-        match = EPISODE_NUM_RE.search(url.rstrip("/"))
+        """Numero do episodio ou o sufixo da URL (ex: 'trailer')."""
+        tail = url.rstrip("/").split("/")[-1]
+        match = EPISODE_NUM_RE.search(tail)
         if match:
             return match.group(1)
-        tail = re.search(r"(\d+)$", url.rstrip("/").split("/")[-1])
-        return tail.group(1) if tail else "?"
+        number = re.search(r"(\d+)$", tail)
+        if number:
+            return number.group(1)
+        # sem numero (trailer, extra...): usa a ultima palavra do slug
+        word = re.sub(r"[^a-z0-9-]", "", tail.split("-")[-1])
+        return word or "extra"
 
     @staticmethod
     def _page_num(href: str, slug: str) -> int | None:
@@ -149,7 +155,7 @@ class AnimeStreamScraper(Scraper):
         if not source:
             raise ScraperError("Nenhuma fonte de video encontrada")
         folder = ensure_folder(title)
-        target = folder / f"{label}.mp4"
+        target = folder / sanitize(f"{label}.mp4")
         headers = {"User-Agent": USER_AGENT, "Referer": url}
         try:
             with httpx.Client(follow_redirects=True, timeout=600) as client:
