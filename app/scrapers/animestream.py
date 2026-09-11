@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -151,39 +151,77 @@ class AnimeStreamScraper(Scraper):
     def _episode_animeq(self, url: str, title: str, label: str, progress_cb: ProgressCb) -> None:
         html = fetch(url, referer=url)
         soup = BeautifulSoup(html, "lxml")
-        source = self._animeq_source(soup, html)
-        if not source:
-            raise ScraperError("Nenhuma fonte de video encontrada")
+        mp4, m3u8, outros = self._animeq_sources(soup, html, url)
         folder = ensure_folder(title)
         target = folder / sanitize(f"{label}.mp4")
         headers = {"User-Agent": USER_AGENT, "Referer": url}
-        try:
-            with httpx.Client(follow_redirects=True, timeout=600) as client:
-                with client.stream("GET", source, headers=headers) as response:
-                    response.raise_for_status()
-                    total = int(response.headers.get("content-length") or 0)
-                    done = 0
-                    with target.open("wb") as handle:
-                        for chunk in response.iter_bytes():
-                            handle.write(chunk)
-                            done += len(chunk)
-                            percent = int(done * 100 / total) if total else 0
-                            progress_cb(percent, f"Baixando {label}.mp4... {percent}%")
-        except httpx.HTTPError as exc:
-            raise ScraperError(f"Falha ao baixar o episodio: {exc}") from exc
+        # 1) mp4 direto (melhor caso)
+        for source in mp4:
+            try:
+                with httpx.Client(follow_redirects=True, timeout=600) as client:
+                    with client.stream("GET", source, headers=headers) as response:
+                        response.raise_for_status()
+                        total = int(response.headers.get("content-length") or 0)
+                        done = 0
+                        with target.open("wb") as handle:
+                            for chunk in response.iter_bytes():
+                                handle.write(chunk)
+                                done += len(chunk)
+                                percent = int(done * 100 / total) if total else 0
+                                progress_cb(percent, f"Baixando {label}.mp4... {percent}%")
+                return
+            except httpx.HTTPError:
+                continue  # tenta proximo mp4
+        # 2) HLS via yt-dlp (melhor qualidade automatica)
+        if m3u8:
+            ffmpeg = ensure_ffmpeg()
+            last_error: Exception | None = None
+            for source in m3u8:
+                try:
+                    ytdlp(source, str(folder / f"{label}.%(ext)s"), progress_cb, ffmpeg)
+                    return
+                except ScraperError as exc:
+                    last_error = exc
+            if last_error:
+                extra = f" Outros servidores: {', '.join(outros)}." if outros else ""
+                raise ScraperError(
+                    "Servidores de video deste episodio falharam: "
+                    f"{str(last_error)[-100:]}.{extra}"
+                ) from last_error
+        # 3) so sobraram players protegidos
+        tipos = ", ".join(outros) if outros else "nenhum encontrado"
+        raise ScraperError(
+            "Nenhuma fonte direta disponivel para este episodio "
+            f"(servidores restantes: {tipos}). Tente outro anime/host "
+            "(ex: animesdigital.org)."
+        )
 
     @staticmethod
-    def _animeq_source(soup: BeautifulSoup, html: str) -> str | None:
+    def _animeq_sources(soup: BeautifulSoup, html: str, page: str) -> tuple[list[str], list[str], list[str]]:
+        """Classifica as fontes do episodio: (mp4s, m3u8s, players protegidos)."""
+        mp4s: list[str] = []
+        m3u8s: list[str] = []
+        protegidos: set[str] = set()
         for video in soup.select("video"):
-            src = video.get("src") or ""
-            if src.endswith(".mp4"):
-                return src
-            for source in video.select("source"):
-                ssrc = source.get("src") or ""
-                if ssrc.endswith(".mp4"):
-                    return ssrc
-        match = MP4_RE.search(html)
-        return match.group(0) if match else None
+            for s in [video.get("src")] + [x.get("src") for x in video.select("source")]:
+                src = urljoin(page, s or "")
+                if not src:
+                    continue
+                if ".mp4" in src:
+                    mp4s.append(src)
+                elif ".m3u8" in src or "stream.php" in src:
+                    m3u8s.append(src)
+        for found in MP4_RE.findall(html):
+            absolute = urljoin(page, found)
+            if absolute not in mp4s:
+                mp4s.append(absolute)
+        for iframe in soup.select("iframe[src]"):
+            src = iframe.get("src") or ""
+            if "blogger.com" in src:
+                protegidos.add("Blogger")
+            elif "animeshd.cloud" in src or "strp2p" in src:
+                protegidos.add("player FHD (criptografado)")
+        return mp4s, m3u8s, sorted(protegidos)
 
     # -- otakubr.com ----------------------------------------------------
 
