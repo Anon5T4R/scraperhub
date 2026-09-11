@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -27,6 +28,32 @@ WEB_DIR = _web_dir()
 
 app = FastAPI(title="ScraperHub", version="0.1.0")
 manager = TaskManager(max_workers=2)
+
+ALLOWED_HOSTS = ("127.0.0.1", "localhost")
+
+
+def _origin_ok(value: str, server_port: int | None) -> bool:
+    """True se o host do Origin/Referer for o proprio servidor."""
+    parsed = urlparse(value)
+    host = (parsed.hostname or "").lower()
+    if host not in ALLOWED_HOSTS:
+        return False
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    return port is None or port == server_port
+
+
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    """Bloqueia requisicoes de outras origens (CSRF/DNS-rebinding)."""
+    server_port = request.url.port if request.url.port else 80
+    for header in ("origin", "referer"):
+        value = request.headers.get(header)
+        if value and not _origin_ok(value, server_port):
+            return JSONResponse(status_code=403, content={"detail": "Origem nao autorizada."})
+    return await call_next(request)
 
 
 @app.exception_handler(Exception)
@@ -79,31 +106,34 @@ class AssembleDownloadRequest(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
-def _resolve(url: str, force: str | None = None) -> Scraper:
-    url = normalize_url(url)
+def _resolve(url: str, force: str | None = None) -> tuple[Scraper, str]:
+    """Resolve o scraper para a URL, normalizando-a uma unica vez."""
+    try:
+        url = normalize_url(url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if force:
         scraper = get_scraper(force)
         if scraper is None:
             raise HTTPException(status_code=404, detail=f"Scraper desconhecido: {force}")
-        return scraper
+        return scraper, url
     scraper = detect(url)
     if scraper is None:
         raise HTTPException(status_code=404, detail="Nenhum scraper reconheceu esta URL.")
-    return scraper
+    return scraper, url
 
 
 @app.post("/api/detect")
 def api_detect(payload: UrlRequest) -> dict:
     """Detecta o scraper adequado para a URL (ou o forcado informado)."""
-    scraper = _resolve(payload.url, payload.force)
+    scraper, _ = _resolve(payload.url, payload.force)
     return {"scraper_id": scraper.id, "kind": scraper.kind, "label": scraper.label}
 
 
 @app.post("/api/info")
 def api_info(payload: UrlRequest) -> dict:
     """Retorna metadados e itens do conteudo da URL."""
-    url = normalize_url(payload.url)
-    scraper = _resolve(url, payload.force)
+    scraper, url = _resolve(payload.url, payload.force)
     try:
         info = scraper.get_info(url)
     except ScraperError as exc:
@@ -114,8 +144,7 @@ def api_info(payload: UrlRequest) -> dict:
 @app.post("/api/download")
 def api_download(payload: DownloadRequest) -> dict:
     """Cria uma tarefa de download em background e retorna o id."""
-    url = normalize_url(payload.url)
-    scraper = _resolve(url, payload.force)
+    scraper, url = _resolve(payload.url, payload.force)
 
     def run(task_id: str) -> None:
         def progress_cb(progress: int, message: str) -> None:

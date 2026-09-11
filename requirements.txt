@@ -7,3 +7,4 @@ playwright
 yt-dlp
 gallery-dl
 gdown
+pytest

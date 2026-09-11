@@ -9,7 +9,7 @@ from .discovery import discover_sites, relevante
 from .scrapers.animestream import AnimeStreamScraper
 from .scrapers.animestream_net import run_downloads
 from .scrapers.base import ProgressCb, ScraperError
-from .search import _quality, search_all
+from .search import probe_quality, search_all
 
 MAX_FONTES = 4
 _SCRAPER = AnimeStreamScraper()
@@ -113,7 +113,7 @@ def _probe(result: dict) -> dict:
         except Exception:
             source = None  # fonte sem primeira linha valida: prioridade menor
         if source:
-            fonte["qualidade"] = _quality(source)
+            fonte["qualidade"] = probe_quality(source)
     return fonte
 
 

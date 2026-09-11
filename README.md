@@ -37,6 +37,14 @@ baixar o navegador usado pelo scraper de manga.
   w2.chainsmokercat.website). Tambem cobre o padrao Madara
   (`/manga/{slug}/chapter/{n}` e `/manga/{slug}/{capitulo}/`) e o
   ReadAllComics (`/comic/{slug}/{capitulo}/`). HTTP puro, rapido.
+- **Tsundoku** (`tsundoku`): series PT-BR do tsundoku.com.br (light novels em
+  texto e mangas com reader de imagens). A pagina da serie (`/manga/{slug}/`)
+  lista todos os capitulos como links na raiz
+  (`/{serie}-vol-N-cap-M-{titulo}/` ou `/{serie}-cap-NN-{titulo}/`); o numero
+  do capitulo e o numero apos `cap-`. HTTP puro para listar; o download usa
+  Playwright para renderizar o reader (`#readerarea`) e coletar as imagens
+  (`img.ts-main-image`, com fallback para `data-src` das paginas lazy).
+  Capitulos de novel (texto) nao tem paginas e sao pulados com aviso.
 - **Galeria** (`gallery`): galerias de imagens via `gallery-dl` (biblioteca
   Python): imgur, pinterest, reddit, pixiv, boorus (danbooru/gelbooru/
   konachan/...), artstation, tapas, webtoons, x/twitter, bluesky. Trata a
@@ -52,10 +60,12 @@ baixar o navegador usado pelo scraper de manga.
   (modo forcado). Opcoes `depth` (padrao 2) e `max_pages` (padrao 15). O
   HTML nao e reescrito: os links permanecem absolutos.
 - **Anime (serie)** (`animestream`): series/temporadas em animeq.cloud (MP4
-  direto), animesdigital.org (HLS via ffmpeg) e otakubr.com (apenas listagem;
-  o player Blogger do site e protegido e o download falha com aviso claro).
-  Cole o link da pagina do anime: a UI lista todos os episodios com
-  selecao multipla (por temporada no otakubr, `S1E01`).
+  direto), animesdigital.org (HLS via ffmpeg), otakubr.com (apenas listagem;
+  o player Blogger do site e protegido e o download falha com aviso claro) e
+  animexnovel.com (episodios hospedados no Google Drive, baixados via gdown;
+  alguns episodios podem estar restritos pelo dono do arquivo). Cole o link
+  da pagina do anime: a UI lista todos os episodios com selecao multipla
+  (por temporada no otakubr, `S1E01`).
 - **Video** (`video`): fallback generico para qualquer URL http(s), usando
   `yt-dlp` (API Python embutida no executavel). O `ffmpeg` e baixado
   automaticamente ao lado do exe na primeira vez que salvar um video

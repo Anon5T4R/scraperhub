@@ -155,14 +155,14 @@ def verify_quality(url: str) -> dict:
             "suporte": True,
             "title": title,
             "episodios": len(items),
-            "qualidade": _quality(source),
+            "qualidade": probe_quality(source),
             "idioma": _idioma(f"{url} {title}"),
         }
     except Exception as exc:
         return {"suporte": False, "motivo": str(exc)[:150]}
 
 
-def _quality(source: str) -> str:
+def probe_quality(source: str) -> str:
     """Maior resolucao (altura) entre os formatos reportados pelo yt-dlp."""
     import time
 

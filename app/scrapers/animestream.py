@@ -1,4 +1,4 @@
-﻿"""Scraper de series de anime em 3 hosts (animeq, otakubr, animesdigital)."""
+﻿"""Scraper de series de anime em 4 hosts (animeq, otakubr, animesdigital, animexnovel)."""
 from __future__ import annotations
 
 import re
@@ -7,15 +7,24 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from . import browser
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .deps import ensure_ffmpeg
 from .animestream_net import USER_AGENT, ensure_folder, fetch, host, run_downloads, sanitize, ytdlp
 
-HOSTS = ("animeq.cloud", "otakubr.com", "animesdigital.org")
+HOSTS = ("animeq.cloud", "otakubr.com", "animesdigital.org", "animexnovel.com")
 MAX_PAGES = 30
 MP4_RE = re.compile(r"https?://[^\"'\s]+\.mp4")
 EPISODE_NUM_RE = re.compile(r"episodio-(\d+)$")
 OTAKUBR_EP_RE = re.compile(r"^https?://[^/]+/anime/([^/]+)/(\d+)/(\d+)/?$")
+ANIMEXNOVEL_EP_RE = re.compile(r"/anime/[^/]+/episodio-(\d+)/?$")
+DRIVE_ID_RE = re.compile(r"[-\w]{25,}")
+
+
+def drive_url(src: str) -> str | None:
+    """Monta a URL de download do Google Drive a partir do src do iframe."""
+    match = DRIVE_ID_RE.search(src or "")
+    return f"https://drive.google.com/uc?id={match.group(0)}" if match else None
 
 
 class AnimeStreamScraper(Scraper):
@@ -34,6 +43,8 @@ class AnimeStreamScraper(Scraper):
             return self._info_animeq(url)
         if host_name == "otakubr.com":
             return self._info_otakubr(url)
+        if host_name == "animexnovel.com":
+            return self._info_animexnovel(url)
         return self._info_animesdigital(url)
 
     def download(
@@ -54,6 +65,14 @@ class AnimeStreamScraper(Scraper):
                 progress_cb,
                 self._info_otakubr,
                 lambda ep, title, label, cb: self._episode_otakubr(ep, title, label, cb, ffmpeg),
+            )
+        elif host_name == "animexnovel.com":
+            self._download_series(
+                url,
+                item_ids,
+                progress_cb,
+                self._info_animexnovel,
+                self._episode_animexnovel,
             )
         else:
             ffmpeg = ensure_ffmpeg()
@@ -105,6 +124,8 @@ class AnimeStreamScraper(Scraper):
             self._episode_otakubr(episode_url, title, label, progress_cb, ensure_ffmpeg())
         elif host_name == "animesdigital.org":
             self._episode_animesdigital(episode_url, title, label, progress_cb, ensure_ffmpeg())
+        elif host_name == "animexnovel.com":
+            self._episode_animexnovel(episode_url, title, label, progress_cb)
         else:
             # animeq e qualquer outro site generico: extracao HTML direta
             self._episode_animeq(episode_url, title, label, progress_cb)
@@ -163,6 +184,10 @@ class AnimeStreamScraper(Scraper):
                 return None
             src = iframe.get("src") or ""
             return unquote(parse_qs(urlparse(src).query).get("d", [""])[0]) or None
+        if host(episode_url) == "animexnovel.com":
+            soup = BeautifulSoup(fetch(episode_url), "lxml")
+            iframe = soup.select_one('iframe[src*="drive.google.com"]')
+            return drive_url(iframe.get("src") or "") if iframe else None
         html = fetch(episode_url, referer=episode_url)
         soup = BeautifulSoup(html, "lxml")
         mp4, m3u8, _ = self._animeq_sources(soup, html, episode_url)
@@ -393,3 +418,71 @@ class AnimeStreamScraper(Scraper):
         if not m3u8:
             raise ScraperError("Nenhuma fonte de video encontrada")
         ytdlp(m3u8, str(ensure_folder(title) / f"{label}.%(ext)s"), progress_cb, ffmpeg)
+
+    # -- animexnovel.com ------------------------------------------------
+
+    def _info_animexnovel(self, url: str) -> dict:
+        """Enumera episodios de uma serie do animexnovel (lista carregada por JS)."""
+        with browser.run() as context:
+            page = context.new_page()
+            page.set_default_timeout(30000)
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(2000)
+                browser.scroll_until_stable(
+                    page,
+                    "a[href*='episodio']",
+                    max_iter=30,
+                    wait_ms=800,
+                )
+                hrefs = page.eval_on_selector_all(
+                    "a[href*='episodio']",
+                    "els => els.map(e => e.getAttribute('href')).filter(h => h && h.includes('episodio'))",
+                )
+                title = (page.inner_text("h1") or "").strip()
+            except Exception as exc:
+                raise ScraperError(f"Falha ao ler a pagina do anime: {exc}") from exc
+            finally:
+                page.close()
+        items: list[dict] = []
+        seen: set[str] = set()
+        for href in hrefs:
+            absolute = urljoin(url, href)
+            if absolute.startswith("http://"):
+                absolute = "https://" + absolute[len("http://"):]
+            if absolute in seen:
+                continue
+            seen.add(absolute)
+            match = ANIMEXNOVEL_EP_RE.search(absolute)
+            if not match:
+                continue
+            items.append({"id": absolute, "label": f"Ep {int(match.group(1)):02d}"})
+        if not items:
+            raise ScraperError("Nenhum episodio encontrado nesta pagina.")
+        return {"title": title or "Anime sem titulo", "cover": None, "items": items}
+
+    def _episode_animexnovel(self, url, title, label, progress_cb) -> None:
+        soup = BeautifulSoup(fetch(url), "lxml")
+        iframe = soup.select_one('iframe[src*="drive.google.com"]')
+        if not iframe:
+            raise ScraperError("Nenhuma fonte de video encontrada")
+        drive = drive_url(iframe.get("src") or "")
+        if not drive:
+            raise ScraperError("Nao foi possivel extrair o id do arquivo do Google Drive.")
+        folder = ensure_folder(title)
+        target = folder / sanitize(f"{label}.mp4")
+        import gdown
+
+        progress_cb(0, f"Baixando {label} do Google Drive...")
+        try:
+            result = gdown.download(
+                url=drive,
+                output=str(target),
+                quiet=True,
+            )
+        except Exception as exc:  # gdown levanta variados tipos
+            raise ScraperError(f"Falha no download do Google Drive: {exc}") from exc
+        if not result:
+            raise ScraperError(
+                "gdown nao conseguiu baixar este episodio (link privado ou cota excedida?)."
+            )
