@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .scrapers import Scraper, ScraperError, detect, get_scraper, normalize_url
+from .search import load_sites, save_sites, search_all, verify_quality
 from .tasks import TaskManager
 
 
@@ -47,6 +48,18 @@ class DownloadRequest(BaseModel):
     items: list[str] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)
     force: str | None = None
+
+
+class SearchRequest(BaseModel):
+    """Corpo com o termo de busca multi-site."""
+
+    term: str = Field(min_length=1)
+
+
+class SitesRequest(BaseModel):
+    """Corpo com a lista de sites de busca."""
+
+    sites: list[str] = Field(default_factory=list)
 
 
 def _resolve(url: str, force: str | None = None) -> Scraper:
@@ -109,6 +122,37 @@ def api_task(task_id: str) -> dict:
     if task is None:
         raise HTTPException(status_code=404, detail="Tarefa nao encontrada.")
     return task
+
+
+@app.post("/api/search")
+def api_search(payload: SearchRequest) -> dict:
+    """Busca o termo em todos os sites configurados."""
+    term = payload.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+    resultados, erros = search_all(term)
+    return {"resultados": resultados, "erros": erros}
+
+
+@app.get("/api/sites")
+def api_sites_get() -> dict:
+    """Lista os sites de busca configurados."""
+    return {"sites": load_sites()}
+
+
+@app.post("/api/sites")
+def api_sites_post(payload: SitesRequest) -> dict:
+    """Salva a lista de sites de busca e devolve a versao normalizada."""
+    return {"sites": save_sites(payload.sites)}
+
+
+@app.post("/api/search_verify")
+def api_search_verify(payload: UrlRequest) -> dict:
+    """Verifica a melhor qualidade do primeiro episodio da serie."""
+    result = verify_quality(payload.url)
+    if not result.get("suporte"):
+        raise HTTPException(status_code=502, detail=result.get("motivo") or "Falha na verificacao.")
+    return result
 
 
 app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

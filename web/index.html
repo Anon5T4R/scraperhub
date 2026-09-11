@@ -40,7 +40,7 @@
   }
   .hidden { display: none; }
   label { font-size: 14px; color: var(--muted); }
-  input[type="url"] {
+  input[type="url"], input[type="text"], textarea {
     width: 100%;
     background: #0c0e12;
     color: var(--text);
@@ -48,7 +48,9 @@
     border-radius: 10px;
     padding: 12px 14px;
     font-size: 15px;
+    font-family: inherit;
   }
+  textarea { resize: vertical; min-height: 88px; font-size: 14px; }
   select {
     background: #0c0e12;
     color: var(--text);
@@ -91,6 +93,19 @@
   }
   .chapter { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 6px; border-radius: 6px; }
   .chapter:hover { background: #12151b; }
+  .search-results { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .search-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .search-title { font-size: 14px; font-weight: 600; }
+  .search-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .search-actions button { padding: 8px 12px; }
   .task { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px; }
   .task-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
   .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #2a303b; }
@@ -119,6 +134,26 @@
   <h1>ScraperHub <span class="tag">(uso pessoal/estudo)</span></h1>
 </header>
 <main>
+  <section class="card">
+    <label for="search">Buscar anime por nome</label>
+    <div class="row" style="margin-top:8px">
+      <input id="search" type="text" placeholder="Buscar anime por nome..." autocomplete="off" spellcheck="false">
+      <button id="search-btn">Buscar</button>
+    </div>
+    <p id="search-status" class="muted" style="margin:10px 0 0"></p>
+    <div id="search-results" class="search-results hidden"></div>
+    <details id="sites-panel" style="margin-top:12px">
+      <summary class="muted" style="cursor:pointer">Sites de busca</summary>
+      <div style="margin-top:10px">
+        <textarea id="sites" spellcheck="false" placeholder="https://exemplo.com/"></textarea>
+        <div class="row between" style="margin-top:8px">
+          <span id="sites-status" class="muted"></span>
+          <button id="sites-save" class="ghost">Salvar sites</button>
+        </div>
+      </div>
+    </details>
+  </section>
+
   <section class="card">
     <label for="url">Cole o link e o scraper certo sera detectado automaticamente</label>
     <div class="row" style="margin-top:8px">
@@ -351,9 +386,96 @@ async function pollTasks() {
   }
 }
 
+function setSearchStatus(message) {
+  $("search-status").textContent = message;
+}
+
+function setSitesStatus(message) {
+  $("sites-status").textContent = message;
+}
+
+async function searchAnime() {
+  const term = $("search").value.trim();
+  const results = $("search-results");
+  if (!term) { setSearchStatus("Digite um nome para buscar."); return; }
+  setSearchStatus("Buscando...");
+  results.classList.add("hidden");
+  results.replaceChildren();
+  try {
+    const data = await api.post("/api/search", { term });
+    renderSearchResults(data);
+    const hosts = Object.keys(data.erros || {});
+    const sufixo = hosts.length ? ` (falha: ${hosts.join(", ")})` : "";
+    setSearchStatus(`${(data.resultados || []).length} resultado(s) encontrado(s)${sufixo}.`);
+  } catch (err) {
+    setSearchStatus("Erro: " + err.message);
+  }
+}
+
+function renderSearchResults(data) {
+  const container = $("search-results");
+  container.replaceChildren();
+  const items = data.resultados || [];
+  if (!items.length) {
+    container.appendChild(el("p", { class: "muted", text: "Nenhum resultado encontrado." }));
+    container.classList.remove("hidden");
+    return;
+  }
+  for (const item of items) container.appendChild(renderSearchItem(item));
+  container.classList.remove("hidden");
+}
+
+function renderSearchItem(item) {
+  const row = el("div", { class: "search-item" });
+  const info = el("div");
+  info.appendChild(el("div", { class: "search-title", text: item.title || "Sem titulo" }));
+  info.appendChild(el("div", { class: "muted", text: `${item.site} · ${item.idioma}` }));
+  const actions = el("div", { class: "search-actions" });
+  const use = el("button", { class: "ghost", text: "Usar" });
+  use.addEventListener("click", () => { $("url").value = item.url; analyze(); });
+  const verify = el("button", { class: "ghost", text: "Verificar qualidade" });
+  const quality = el("span", { class: "muted" });
+  verify.addEventListener("click", async () => {
+    quality.textContent = "Verificando...";
+    try {
+      const res = await api.post("/api/search_verify", { url: item.url });
+      quality.textContent = `${res.qualidade} · ${res.episodios} eps`;
+    } catch (err) {
+      quality.textContent = err.message;
+    }
+  });
+  actions.append(use, verify, quality);
+  row.append(info, actions);
+  return row;
+}
+
+async function loadSites() {
+  try {
+    const data = await api.get("/api/sites");
+    $("sites").value = (data.sites || []).join("\n");
+  } catch (err) {
+    setSitesStatus("Erro: " + err.message);
+  }
+}
+
+async function saveSites() {
+  const urls = $("sites").value.split("\n").map((line) => line.trim()).filter(Boolean);
+  try {
+    const data = await api.post("/api/sites", { sites: urls });
+    $("sites").value = (data.sites || []).join("\n");
+    setSitesStatus("Sites salvos.");
+  } catch (err) {
+    setSitesStatus("Erro: " + err.message);
+  }
+}
+
+$("search-btn").addEventListener("click", searchAnime);
+$("search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchAnime(); });
+$("sites-save").addEventListener("click", saveSites);
 $("analyze").addEventListener("click", analyze);
 $("url").addEventListener("keydown", (event) => { if (event.key === "Enter") analyze(); });
 $("refresh").addEventListener("click", pollTasks);
+loadSites();
 pollTasks();
 setInterval(pollTasks, 1500);
 </script>

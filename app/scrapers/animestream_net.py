@@ -69,6 +69,9 @@ def ytdlp(url: str, outtmpl: str, progress_cb: ProgressCb, ffmpeg: str | None) -
         "retries": 5,
         "fragment_retries": 5,
         "socket_timeout": 30,
+        # CDNs de anime costumam servir cadeia de certificado incompleta;
+        # para download de midia (dado nao sensivel) dispensamos a checagem
+        "nocheckcertificate": True,
         "progress_hooks": [_hook(progress_cb)],
     }
     if ffmpeg:

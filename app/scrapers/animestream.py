@@ -92,6 +92,21 @@ class AnimeStreamScraper(Scraper):
             progress_cb,
         )
 
+    def first_source(self, episode_url: str) -> str | None:
+        """Primeira fonte de video resolvivel do episodio (mp4/m3u8), ou None."""
+        if host(episode_url) == "animesdigital.org":
+            soup = BeautifulSoup(fetch(episode_url), "lxml")
+            iframe = soup.select_one('iframe[src*="api.anivideo.net"]')
+            if not iframe:
+                return None
+            src = iframe.get("src") or ""
+            return unquote(parse_qs(urlparse(src).query).get("d", [""])[0]) or None
+        html = fetch(episode_url, referer=episode_url)
+        soup = BeautifulSoup(html, "lxml")
+        mp4, m3u8, _ = self._animeq_sources(soup, html, episode_url)
+        sources = mp4 + m3u8
+        return sources[0] if sources else None
+
     # -- animeq.cloud ---------------------------------------------------
 
     @staticmethod
