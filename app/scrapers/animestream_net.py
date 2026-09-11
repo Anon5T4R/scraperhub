@@ -16,6 +16,8 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 RATE_S = 0.5
+EP_RETRIES = 3
+RETRY_WAIT_S = 8
 
 
 def host(url: str) -> str:
@@ -56,7 +58,7 @@ def _hook(progress_cb: ProgressCb):  # noqa: ANN202 - callback do yt-dlp
 
 
 def ytdlp(url: str, outtmpl: str, progress_cb: ProgressCb, ffmpeg: str | None) -> None:
-    """Baixa uma URL via yt-dlp (mp4 direto, HLS, etc.)."""
+    """Baixa uma URL via yt-dlp (mp4 direto, HLS, etc.) com retries internos."""
     import yt_dlp
 
     options: dict[str, Any] = {
@@ -64,6 +66,9 @@ def ytdlp(url: str, outtmpl: str, progress_cb: ProgressCb, ffmpeg: str | None) -
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        "retries": 5,
+        "fragment_retries": 5,
+        "socket_timeout": 30,
         "progress_hooks": [_hook(progress_cb)],
     }
     if ffmpeg:
@@ -80,15 +85,42 @@ def run_downloads(
     download_one: Callable[[str, str], None],
     progress_cb: ProgressCb,
 ) -> None:
-    """Baixa os itens selecionados com progresso agregado e rate limit."""
+    """Baixa os itens com retry; falha em um nao aborta os demais.
+
+    Erros transitorios (HTTP 5xx do CDN) sao tentados ate EP_RETRIES vezes.
+    No fim, se algum item falhou, levanta ScraperError listando so os
+    falhos — os demais continuam salvos.
+    """
     total = len(selected)
+    falhos: list[str] = []
     for index, item in enumerate(selected, start=1):
         label = str(item["label"])
         progress_cb(int((index - 1) / total * 100), f"Iniciando {label} ({index}/{total})")
-        download_one(str(item["id"]), label)
-        progress_cb(int(index / total * 100), f"Concluido {label} ({index}/{total})")
+        ok = False
+        for attempt in range(1, EP_RETRIES + 1):
+            try:
+                download_one(str(item["id"]), label)
+                ok = True
+                break
+            except ScraperError as exc:
+                if attempt < EP_RETRIES:
+                    progress_cb(
+                        int((index - 1) / total * 100),
+                        f"{label} falhou (tentativa {attempt}/{EP_RETRIES}): "
+                        f"{str(exc)[-80:]} — repetindo em {RETRY_WAIT_S}s",
+                    )
+                    time.sleep(RETRY_WAIT_S)
+                else:
+                    falhos.append(f"{label} ({str(exc)[-100:]})")
+        if ok:
+            progress_cb(int(index / total * 100), f"Concluido {label} ({index}/{total})")
         if index < total:
             time.sleep(RATE_S)
+    if falhos:
+        raise ScraperError(
+            f"{len(falhos)} de {total} itens falharam apos {EP_RETRIES} tentativas: "
+            + "; ".join(falhos)
+        )
 
 
 def ensure_folder(title: str) -> Path:
