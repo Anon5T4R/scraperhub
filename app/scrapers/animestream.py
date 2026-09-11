@@ -278,16 +278,28 @@ class AnimeStreamScraper(Scraper):
         soup = BeautifulSoup(fetch(url), "lxml")
         h1 = soup.find("h1")
         seen: set[str] = set()
-        links: list[str] = []
+        items: list[dict] = []
         for link in soup.select('a[href*="/video/a/"]'):
             href = link.get("href") or ""
             if "#" in href or href in seen:
                 continue
             seen.add(href)
-            links.append(href)
-        items = [{"id": href, "label": f"Ep {index:02d}"} for index, href in enumerate(links, start=1)]
+            # o numero REAL vem no texto do link ("... Episodio 03 ..."),
+            # nao da posicao na lista (site lista do mais novo pro mais velho)
+            text = link.get_text(" ", strip=True)
+            match = re.search(r"epis[oó]dio\s*(\d+)", text, re.IGNORECASE)
+            if match:
+                label = f"Ep {int(match.group(1)):02d}"
+            else:
+                label = f"Ep {text[:30]}" if text else f"item {len(items) + 1}"
+            if any(item["label"] == label for item in items):
+                continue  # episódio duplicado (multiplos servidores)
+            items.append({"id": href, "label": label, "_num": int(match.group(1)) if match else 9999})
         if not items:
             raise ScraperError("Nenhum episodio encontrado nesta pagina.")
+        items.sort(key=lambda item: item["_num"])
+        for item in items:
+            item.pop("_num", None)
         return {
             "title": h1.get_text(strip=True) if h1 else "Anime sem titulo",
             "cover": None,
