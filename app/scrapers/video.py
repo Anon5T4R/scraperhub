@@ -6,6 +6,7 @@ from typing import Any
 
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .deps import ensure_ffmpeg
+from .animestream_net import SilentLogger
 
 DRM_HINTS = ("drm", "protected", "widevine", "encrypted", "clearkey")
 MAX_PLAYLIST = 50
@@ -40,7 +41,7 @@ class VideoScraper(Scraper):
     def get_info(self, url: str) -> dict:
         import yt_dlp
 
-        options = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist"}
+        options = {"quiet": True, "no_warnings": True, "extract_flat": "in_playlist", "logger": SilentLogger()}
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
                 data = ydl.extract_info(url, download=False)
@@ -69,6 +70,7 @@ class VideoScraper(Scraper):
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
+            "logger": SilentLogger(),
             "progress_hooks": [self._hook(progress_cb)],
         }
         if ffmpeg:

@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup, Tag
 
 from .scrapers import detect
 from .scrapers.animestream import AnimeStreamScraper
-from .scrapers.animestream_net import USER_AGENT
+from .scrapers.animestream_net import USER_AGENT, SilentLogger
 from .scrapers.base import app_root
 
 SITES_FILE = app_root() / "sites.txt"
@@ -159,7 +159,13 @@ def _quality(source: str) -> str:
 
     import yt_dlp
 
-    options = {"quiet": True, "no_warnings": True, "skip_download": True, "nocheckcertificate": True}
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "nocheckcertificate": True,
+        "logger": SilentLogger(),
+    }
     info = None
     for attempt in range(2):  # SSL/5xx transitivos: uma retentativa
         try:

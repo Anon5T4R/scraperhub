@@ -20,6 +20,22 @@ EP_RETRIES = 3
 RETRY_WAIT_S = 8
 
 
+class SilentLogger:
+    """Logger no-op: cala o stderr do yt-dlp (erros viram excecao de todo jeito)."""
+
+    def debug(self, msg: str) -> None:  # noqa: ARG002
+        pass
+
+    def info(self, msg: str) -> None:  # noqa: ARG002
+        pass
+
+    def warning(self, msg: str) -> None:  # noqa: ARG002
+        pass
+
+    def error(self, msg: str) -> None:  # noqa: ARG002
+        pass
+
+
 def host(url: str) -> str:
     """Hostname em minusculas sem www."""
     return (urlparse(url).hostname or "").lower().removeprefix("www.")
@@ -72,6 +88,7 @@ def ytdlp(url: str, outtmpl: str, progress_cb: ProgressCb, ffmpeg: str | None) -
         # CDNs de anime costumam servir cadeia de certificado incompleta;
         # para download de midia (dado nao sensivel) dispensamos a checagem
         "nocheckcertificate": True,
+        "logger": SilentLogger(),
         "progress_hooks": [_hook(progress_cb)],
     }
     if ffmpeg:
