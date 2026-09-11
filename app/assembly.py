@@ -265,6 +265,34 @@ def download_season(
         run_downloads(selected, download_one, progress_cb)
     except ScraperError:
         falhou = True  # baixados ficam salvos; resumo e levantado no final
+
+    # SEGUNDA CHANCE: episodios que falharam em todas as fontes conhecidas
+    # disparam a descoberta web agora, procurando uma terceira fonte
+    pendentes = [
+        ep["label"] for ep in episodios
+        if not provenance.get(ep["label"], {}).get("fonte")
+    ]
+    if pendentes:
+        progress_cb(0, f"{len(pendentes)} episodio(s) sem fonte — buscando na web...")
+        extras = _descobrir_extras(term, plan)
+        if extras:
+            for fonte in extras:
+                progress_cb(0, f"nova fonte da web: {fonte['site']} ({len(fonte['eps'])} eps)")
+            for label in pendentes:
+                for fonte in extras:
+                    if label in fonte["eps"] and fonte["eps"][label] not in mortas:
+                        try:
+                            _SCRAPER.download_episode(fonte["eps"][label], title, label, progress_cb)
+                        except ScraperError:
+                            mortas.add(fonte["eps"][label])
+                            continue
+                        provenance[label] = {
+                            "label": label,
+                            "fonte": fonte["site"],
+                            "qualidade": fonte.get("qualidade"),
+                        }
+                        break
+
     linhas: list[str] = []
     for ep in episodios:
         prov = provenance.get(ep["label"]) or {}
@@ -273,8 +301,27 @@ def download_season(
             sufixo = f" ({qualidade})" if qualidade else ""
             linhas.append(f"{ep['label']} <- {prov['fonte']}{sufixo}")
         else:
-            linhas.append(f"{ep['label']} FALHOU em todas as fontes")
+            linhas.append(f"{ep['label']} FALHOU em todas as fontes (inclusive web)")
     for linha in linhas:
         progress_cb(100, linha)
-    if falhou:
+    if falhou or any(
+        not provenance.get(ep["label"], {}).get("fonte") for ep in episodios
+    ):
         raise ScraperError("Resumo da temporada: " + "; ".join(linhas))
+
+
+def _descobrir_extras(term: str, plan: dict) -> list[dict]:
+    """Busca na web fontes extras para os episodios que falharam.
+
+    Sem filtro de idioma: fontes descobertas nao declaram idioma e sao
+    ultimo recurso (baixar algo e melhor que nao baixar).
+    """
+    conhecidos = [str(f["url"]) for f in plan.get("fontes", [])]
+    achados = discover_sites(term, conhecidos)
+    extras: list[dict] = []
+    with ThreadPoolExecutor(max_workers=MAX_FONTES) as pool:
+        for fonte in pool.map(_probe, [{**a, "descoberta": True} for a in achados]):
+            if fonte.get("erro") or not fonte["eps"]:
+                continue
+            extras.append(fonte)
+    return extras
