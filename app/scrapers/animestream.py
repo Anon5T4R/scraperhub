@@ -92,6 +92,22 @@ class AnimeStreamScraper(Scraper):
             progress_cb,
         )
 
+    def download_episode(
+        self,
+        episode_url: str,
+        title: str,
+        label: str,
+        progress_cb: ProgressCb,
+    ) -> None:
+        """Baixa um episodio avulso (usado pela montagem multi-fonte)."""
+        host_name = host(episode_url)
+        if host_name == "animeq.cloud":
+            self._episode_animeq(episode_url, title, label, progress_cb)
+        elif host_name == "otakubr.com":
+            self._episode_otakubr(episode_url, title, label, progress_cb, ensure_ffmpeg())
+        else:
+            self._episode_animesdigital(episode_url, title, label, progress_cb, ensure_ffmpeg())
+
     def first_source(self, episode_url: str) -> str | None:
         """Primeira fonte de video resolvivel do episodio (mp4/m3u8), ou None."""
         if host(episode_url) == "animesdigital.org":

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .assembly import download_season, plan_season
 from .scrapers import Scraper, ScraperError, detect, get_scraper, normalize_url
 from .search import load_sites, save_sites, search_all, verify_quality
 from .tasks import TaskManager
@@ -60,6 +61,22 @@ class SitesRequest(BaseModel):
     """Corpo com a lista de sites de busca."""
 
     sites: list[str] = Field(default_factory=list)
+
+
+class AssembleInfoRequest(BaseModel):
+    """Corpo para montar a temporada multi-fonte."""
+
+    term: str = ""
+    idioma: str = "qualquer"
+
+
+class AssembleDownloadRequest(BaseModel):
+    """Corpo para baixar a temporada montada."""
+
+    term: str = ""
+    idioma: str = "qualquer"
+    wanted: list[str] | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 def _resolve(url: str, force: str | None = None) -> Scraper:
@@ -153,6 +170,34 @@ def api_search_verify(payload: UrlRequest) -> dict:
     if not result.get("suporte"):
         raise HTTPException(status_code=502, detail=result.get("motivo") or "Falha na verificacao.")
     return result
+
+
+@app.post("/api/assemble_info")
+def api_assemble_info(payload: AssembleInfoRequest) -> dict:
+    """Monta o plano da temporada: fontes rankeadas e melhor fonte por episodio."""
+    term = payload.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+    try:
+        return plan_season(term, payload.idioma or "qualquer")
+    except ScraperError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/assemble_download")
+def api_assemble_download(payload: AssembleDownloadRequest) -> dict:
+    """Cria a tarefa de download da temporada montada e retorna o id."""
+    term = payload.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+
+    def run(task_id: str) -> None:
+        def progress_cb(progress: int, message: str) -> None:
+            manager.update_progress(task_id, progress=progress, current_item=message, log=message)
+
+        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options)
+
+    return {"task_id": manager.create(run)}
 
 
 app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

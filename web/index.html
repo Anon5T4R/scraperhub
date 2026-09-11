@@ -106,6 +106,10 @@
   .search-title { font-size: 14px; font-weight: 600; }
   .search-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .search-actions button { padding: 8px 12px; }
+  .assemble-table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  .assemble-table th, .assemble-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .assemble-table th { color: var(--muted); font-weight: 600; }
+  .assemble-sources { margin: 12px 0; }
   .task { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px; }
   .task-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
   .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #2a303b; }
@@ -138,10 +142,20 @@
     <label for="search">Buscar anime por nome</label>
     <div class="row" style="margin-top:8px">
       <input id="search" type="text" placeholder="Buscar anime por nome..." autocomplete="off" spellcheck="false">
+      <select id="search-lang" title="Idioma">
+        <option value="qualquer">Qualquer</option>
+        <option value="legendado">Legendado</option>
+        <option value="dublado">Dublado</option>
+      </select>
       <button id="search-btn">Buscar</button>
     </div>
     <p id="search-status" class="muted" style="margin:10px 0 0"></p>
     <div id="search-results" class="search-results hidden"></div>
+    <div id="assemble" class="hidden" style="margin-top:12px">
+      <button id="assemble-btn" class="ghost">Montar temporada (multi-fonte)</button>
+      <p id="assemble-status" class="muted" style="margin:10px 0 0"></p>
+      <div id="assemble-result"></div>
+    </div>
     <details id="sites-panel" style="margin-top:12px">
       <summary class="muted" style="cursor:pointer">Sites de busca</summary>
       <div style="margin-top:10px">
@@ -401,6 +415,9 @@ async function searchAnime() {
   setSearchStatus("Buscando...");
   results.classList.add("hidden");
   results.replaceChildren();
+  $("assemble").classList.add("hidden");
+  $("assemble-result").replaceChildren();
+  setAssembleStatus("");
   try {
     const data = await api.post("/api/search", { term });
     renderSearchResults(data);
@@ -423,6 +440,85 @@ function renderSearchResults(data) {
   }
   for (const item of items) container.appendChild(renderSearchItem(item));
   container.classList.remove("hidden");
+  $("assemble").classList.toggle("hidden", !items.length);
+}
+
+function setAssembleStatus(message) {
+  $("assemble-status").textContent = message;
+}
+
+async function assembleInfo() {
+  const term = $("search").value.trim();
+  const idioma = $("search-lang").value || "qualquer";
+  if (!term) { setAssembleStatus("Digite um nome para buscar."); return; }
+  setAssembleStatus("Analisando fontes... pode levar cerca de 1 minuto.");
+  $("assemble-result").replaceChildren();
+  try {
+    const plan = await api.post("/api/assemble_info", { term, idioma });
+    renderAssembly(plan, term, idioma);
+    setAssembleStatus(`${(plan.fontes || []).length} fonte(s), ${(plan.episodios || []).length} episodio(s).`);
+  } catch (err) {
+    setAssembleStatus("Erro: " + err.message);
+  }
+}
+
+function renderAssembly(plan, term, idioma) {
+  const container = $("assemble-result");
+  container.replaceChildren();
+  const episodios = plan.episodios || [];
+  if (!episodios.length) {
+    container.appendChild(el("p", { class: "muted", text: "Nenhum episodio montado." }));
+    return;
+  }
+  const table = el("table", { class: "assemble-table" });
+  const head = el("tr");
+  head.append(
+    el("th", { text: "Ep" }),
+    el("th", { text: "Fonte escolhida" }),
+    el("th", { text: "Alternativas" })
+  );
+  table.appendChild(head);
+  for (const ep of episodios) {
+    const escolhido = ep.escolhido
+      ? `${ep.escolhido.site} (${ep.escolhido.qualidade || "sem qualidade"})`
+      : "sem fonte";
+    const alternativas = (ep.alternativas || []).map((alt) => alt.site).join(", ") || "-";
+    const row = el("tr");
+    row.append(
+      el("td", { text: ep.label }),
+      el("td", { text: escolhido }),
+      el("td", { text: alternativas })
+    );
+    table.appendChild(row);
+  }
+  container.appendChild(table);
+  container.appendChild(renderAssemblySources(plan.fontes || []));
+  const baixar = el("button", { text: "Baixar temporada montada" });
+  baixar.addEventListener("click", () => startAssemblyDownload(plan, term, idioma));
+  container.appendChild(baixar);
+}
+
+function renderAssemblySources(fontes) {
+  const wrap = el("div", { class: "assemble-sources" });
+  wrap.appendChild(el("div", { class: "muted", text: "Fontes" }));
+  for (const fonte of fontes) {
+    const partes = [`${fonte.site} · ${fonte.eps_total} eps · ${fonte.qualidade || "sem qualidade"}`];
+    if (fonte.erro) partes.push(`erro: ${fonte.erro}`);
+    wrap.appendChild(el("div", { class: fonte.erro ? "error" : "muted", text: partes.join(" · ") }));
+  }
+  return wrap;
+}
+
+async function startAssemblyDownload(plan, term, idioma) {
+  const labels = (plan.episodios || []).map((ep) => ep.label);
+  if (!labels.length) { setAssembleStatus("Nada para baixar."); return; }
+  try {
+    const res = await api.post("/api/assemble_download", { term, idioma, wanted: labels, options: {} });
+    setAssembleStatus("Tarefa criada: " + res.task_id.slice(0, 8));
+    await pollTasks();
+  } catch (err) {
+    setAssembleStatus("Erro: " + err.message);
+  }
 }
 
 function renderSearchItem(item) {
@@ -471,6 +567,7 @@ async function saveSites() {
 
 $("search-btn").addEventListener("click", searchAnime);
 $("search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchAnime(); });
+$("assemble-btn").addEventListener("click", assembleInfo);
 $("sites-save").addEventListener("click", saveSites);
 $("analyze").addEventListener("click", analyze);
 $("url").addEventListener("keydown", (event) => { if (event.key === "Enter") analyze(); });
