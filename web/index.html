@@ -27,10 +27,52 @@
     padding: 24px 20px 8px;
     max-width: 960px;
     margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
   }
   header h1 { margin: 0; font-size: 22px; }
   header .tag { color: var(--muted); font-size: 13px; }
+  .header-badge {
+    background: #1d3a5c;
+    color: #9cc4ff;
+    font-size: 13px;
+    font-weight: 600;
+    border: 0;
+    border-radius: 999px;
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+  .header-badge[hidden] { display: none; }
+  .tabs {
+    max-width: 960px;
+    margin: 8px auto 0;
+    padding: 0 20px;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    background: transparent;
+    color: var(--muted);
+    border: 0;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .tab:hover { filter: none; color: var(--text); }
+  .tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+  .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   main { max-width: 960px; margin: 0 auto; padding: 12px 20px 60px; }
+  .panel[hidden] { display: none; }
+  .panel-hint { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
   .card {
     background: var(--card);
     border: 1px solid var(--border);
@@ -136,61 +178,120 @@
 <body>
 <header>
   <h1>ScraperHub <span class="tag">(uso pessoal/estudo)</span></h1>
+  <button id="header-badge" class="header-badge" hidden></button>
 </header>
+
+<nav class="tabs" role="tablist" aria-label="Tipo de conteudo">
+  <button class="tab" role="tab" id="tab-anime" aria-controls="panel-anime" aria-selected="true">Anime</button>
+  <button class="tab" role="tab" id="tab-manga" aria-controls="panel-manga" aria-selected="false" tabindex="-1">Mang&aacute;</button>
+  <button class="tab" role="tab" id="tab-video" aria-controls="panel-video" aria-selected="false" tabindex="-1">V&iacute;deo</button>
+  <button class="tab" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="false" tabindex="-1">Arquivos &amp; outros</button>
+  <button class="tab" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected="false" tabindex="-1">Tarefas</button>
+</nav>
+
 <main>
-  <section class="card">
-    <label for="search">Buscar anime por nome</label>
-    <div class="row" style="margin-top:8px">
-      <input id="search" type="text" placeholder="Buscar anime por nome..." autocomplete="off" spellcheck="false">
-      <select id="search-lang" title="Idioma">
-        <option value="qualquer">Qualquer</option>
-        <option value="legendado">Legendado</option>
-        <option value="dublado">Dublado</option>
-      </select>
-      <button id="search-btn">Buscar</button>
-    </div>
-    <p id="search-status" class="muted" style="margin:10px 0 0"></p>
-    <div id="search-results" class="search-results hidden"></div>
-    <div id="assemble" class="hidden" style="margin-top:12px">
-      <button id="assemble-btn" class="ghost">Montar temporada (multi-fonte)</button>
-      <p id="assemble-status" class="muted" style="margin:10px 0 0"></p>
-      <div id="assemble-result"></div>
-    </div>
-    <details id="sites-panel" style="margin-top:12px">
-      <summary class="muted" style="cursor:pointer">Sites de busca</summary>
-      <div style="margin-top:10px">
-        <textarea id="sites" spellcheck="false" placeholder="https://exemplo.com/"></textarea>
-        <div class="row between" style="margin-top:8px">
-          <span id="sites-status" class="muted"></span>
-          <button id="sites-save" class="ghost">Salvar sites</button>
-        </div>
+  <!-- Anime -->
+  <section class="panel" role="tabpanel" id="panel-anime" aria-labelledby="tab-anime">
+    <section class="card">
+      <label for="search">Buscar anime por nome (legendado/dublado)</label>
+      <div class="row" style="margin-top:8px">
+        <input id="search" type="text" placeholder="Buscar anime por nome..." autocomplete="off" spellcheck="false">
+        <select id="search-lang" title="Idioma">
+          <option value="qualquer">Qualquer</option>
+          <option value="legendado">Legendado</option>
+          <option value="dublado">Dublado</option>
+        </select>
+        <button id="search-btn">Buscar</button>
       </div>
-    </details>
+      <p id="search-status" class="muted" style="margin:10px 0 0"></p>
+      <div id="search-results" class="search-results hidden"></div>
+      <div id="assemble" class="hidden" style="margin-top:12px">
+        <button id="assemble-btn" class="ghost">Montar temporada (multi-fonte)</button>
+        <p id="assemble-status" class="muted" style="margin:10px 0 0"></p>
+        <div id="assemble-result"></div>
+      </div>
+      <details id="sites-panel" style="margin-top:12px">
+        <summary class="muted" style="cursor:pointer">Sites de busca</summary>
+        <div style="margin-top:10px">
+          <textarea id="sites" spellcheck="false" placeholder="https://exemplo.com/"></textarea>
+          <div class="row between" style="margin-top:8px">
+            <span id="sites-status" class="muted"></span>
+            <button id="sites-save" class="ghost">Salvar sites</button>
+          </div>
+        </div>
+      </details>
+    </section>
   </section>
 
-  <section class="card">
-    <label for="url">Cole o link e o scraper certo sera detectado automaticamente</label>
-    <div class="row" style="margin-top:8px">
-      <input id="url" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
-      <select id="force" title="Forcar um scraper especifico">
-        <option value="">Auto</option>
-        <option value="mirror">Espelho de site</option>
-        <option value="ebook">E-book</option>
-        <option value="gallery">Galeria</option>
-      </select>
-      <button id="analyze">Analisar</button>
-    </div>
-    <p id="status" class="muted" style="margin:10px 0 0"></p>
+  <!-- Manga -->
+  <section class="panel" role="tabpanel" id="panel-manga" aria-labelledby="tab-manga" hidden>
+    <section class="card">
+      <label for="url-manga">Cole o link do mang&aacute;</label>
+      <p class="panel-hint">MangaFire e clones, Tsundoku (PT-BR) e sites WordPress/Madara. O scraper certo &eacute; detectado automaticamente.</p>
+      <div class="row" style="margin-top:8px">
+        <input id="url-manga" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
+        <select id="force-manga" title="Forcar um scraper especifico">
+          <option value="">Auto</option>
+          <option value="mirror">Espelho de site</option>
+          <option value="ebook">E-book</option>
+          <option value="gallery">Galeria</option>
+        </select>
+        <button id="analyze-manga">Analisar</button>
+      </div>
+      <p id="status-manga" class="muted" style="margin:10px 0 0"></p>
+    </section>
+    <section id="result-manga" class="card hidden"></section>
   </section>
 
-  <section id="result" class="card hidden"></section>
+  <!-- Video -->
+  <section class="panel" role="tabpanel" id="panel-video" aria-labelledby="tab-video" hidden>
+    <section class="card">
+      <label for="url-video">Cole o link do v&iacute;deo</label>
+      <p class="panel-hint">Qualquer URL suportada pelo yt-dlp: YouTube, playlists e falls gen&eacute;ricos.</p>
+      <div class="row" style="margin-top:8px">
+        <input id="url-video" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
+        <select id="force-video" title="Forcar um scraper especifico">
+          <option value="">Auto</option>
+          <option value="mirror">Espelho de site</option>
+          <option value="ebook">E-book</option>
+          <option value="gallery">Galeria</option>
+        </select>
+        <button id="analyze-video">Analisar</button>
+      </div>
+      <p id="status-video" class="muted" style="margin:10px 0 0"></p>
+    </section>
+    <section id="result-video" class="card hidden"></section>
+  </section>
 
-  <section class="card">
-    <div class="row between">
-      <h2 style="margin:0;font-size:17px">Tarefas</h2>
-      <button id="refresh" class="ghost">Atualizar</button>
-    </div>
-    <div id="tasks"></div>
+  <!-- Arquivos & outros -->
+  <section class="panel" role="tabpanel" id="panel-files" aria-labelledby="tab-files" hidden>
+    <section class="card">
+      <label for="url-files">Cole o link do arquivo ou p&aacute;gina</label>
+      <p class="panel-hint">E-books (.epub/.pdf/.mobi...), galerias de imagens (imgur, reddit, boorus...), arquivos de hosts (Google Drive, MediaFire, .zip/.mp4...) e espelho de site. Escolha o tipo abaixo quando o Auto n&atilde;o acertar.</p>
+      <div class="row" style="margin-top:8px">
+        <input id="url-files" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
+        <select id="force-files" title="Tipo de download">
+          <option value="">Auto</option>
+          <option value="mirror">Espelho de site</option>
+          <option value="ebook">E-book</option>
+          <option value="gallery">Galeria</option>
+        </select>
+        <button id="analyze-files">Analisar</button>
+      </div>
+      <p id="status-files" class="muted" style="margin:10px 0 0"></p>
+    </section>
+    <section id="result-files" class="card hidden"></section>
+  </section>
+
+  <!-- Tarefas -->
+  <section class="panel" role="tabpanel" id="panel-tasks" aria-labelledby="tab-tasks" hidden>
+    <section class="card">
+      <div class="row between">
+        <h2 style="margin:0;font-size:17px">Tarefas</h2>
+        <button id="refresh" class="ghost">Atualizar</button>
+      </div>
+      <div id="tasks"></div>
+    </section>
   </section>
 </main>
 
@@ -217,6 +318,36 @@ const api = {
 const STATUS_LABEL = { pending: "Na fila", running: "Em andamento", done: "Concluida", error: "Erro" };
 const $ = (id) => document.getElementById(id);
 
+// ---- abas ------------------------------------------------------------------
+
+const TABS = Array.from(document.querySelectorAll(".tab"));
+
+function selectTab(tab) {
+  for (const t of TABS) {
+    const selected = t === tab;
+    t.setAttribute("aria-selected", String(selected));
+    t.tabIndex = selected ? 0 : -1;
+    $(t.getAttribute("aria-controls")).hidden = !selected;
+  }
+  tab.focus();
+}
+
+for (const tab of TABS) tab.addEventListener("click", () => selectTab(tab));
+document.querySelector(".tabs").addEventListener("keydown", (event) => {
+  const index = TABS.indexOf(document.activeElement);
+  if (index === -1) return;
+  let next = -1;
+  if (event.key === "ArrowRight") next = (index + 1) % TABS.length;
+  else if (event.key === "ArrowLeft") next = (index - 1 + TABS.length) % TABS.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = TABS.length - 1;
+  if (next !== -1) { event.preventDefault(); selectTab(TABS[next]); }
+});
+
+$("header-badge").addEventListener("click", () => selectTab($("tab-tasks")));
+
+// ---- analise por aba --------------------------------------------------------
+
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
   if (opts.class) node.className = opts.class;
@@ -226,8 +357,12 @@ function el(tag, opts = {}, children = []) {
   return node;
 }
 
+let current = null; // { url, force, info, kind, scraperId, statusEl }
+
 function setStatus(message) {
-  $("status").textContent = message;
+  // mensagem vai para o status da aba que originou a analise atual
+  const target = (current && current.statusEl) || $("status-manga");
+  if (target) target.textContent = message;
 }
 
 function formatDuration(seconds) {
@@ -240,27 +375,37 @@ function formatDuration(seconds) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-let current = null;
+const ANALYZERS = ["manga", "video", "files"].map((name) => ({
+  url: $(`url-${name}`),
+  force: $(`force-${name}`),
+  button: $(`analyze-${name}`),
+  status: $(`status-${name}`),
+  result: $(`result-${name}`),
+}));
 
-async function analyze() {
-  const url = $("url").value.trim();
-  const force = $("force").value || null;
-  const result = $("result");
-  if (!url) { setStatus("Cole um link primeiro."); return; }
-  setStatus("Analisando...");
-  result.classList.add("hidden");
-  result.replaceChildren();
+async function analyzeInto(cfg) {
+  const url = cfg.url.value.trim();
+  const force = cfg.force.value || null;
+  if (!url) { cfg.status.textContent = "Cole um link primeiro."; return; }
+  cfg.status.textContent = "Analisando...";
+  cfg.result.classList.add("hidden");
+  cfg.result.replaceChildren();
   try {
     const detected = await api.post("/api/detect", { url, force });
     const info = await api.post("/api/info", { url, force });
-    current = { url, force, info, kind: detected.kind, scraperId: detected.scraper_id };
-    setStatus(`Scraper detectado: ${detected.label} (${detected.kind})`);
-    renderResult(result, info, detected.kind);
-    result.classList.remove("hidden");
+    current = { url, force, info, kind: detected.kind, scraperId: detected.scraper_id, statusEl: cfg.status };
+    cfg.status.textContent = `Scraper detectado: ${detected.label} (${detected.kind})`;
+    renderResult(cfg.result, info, detected.kind);
+    cfg.result.classList.remove("hidden");
   } catch (err) {
     current = null;
-    setStatus("Erro: " + err.message);
+    cfg.status.textContent = "Erro: " + err.message;
   }
+}
+
+for (const cfg of ANALYZERS) {
+  cfg.button.addEventListener("click", () => analyzeInto(cfg));
+  cfg.url.addEventListener("keydown", (event) => { if (event.key === "Enter") analyzeInto(cfg); });
 }
 
 function renderResult(container, info, kind) {
@@ -357,12 +502,14 @@ async function startDownload(items, options) {
   if (!current) return;
   try {
     const res = await api.post("/api/download", { url: current.url, items, options, force: current.force });
-    setStatus("Tarefa criada: " + res.task_id.slice(0, 8));
+    setStatus("Tarefa criada: " + res.task_id.slice(0, 8) + " (veja a aba Tarefas)");
     await pollTasks();
   } catch (err) {
     setStatus("Erro: " + err.message);
   }
 }
+
+// ---- tarefas ----------------------------------------------------------------
 
 function renderTasks(tasks) {
   const container = $("tasks");
@@ -392,13 +539,24 @@ function renderTask(task) {
   return card;
 }
 
+function updateHeaderBadge(tasks) {
+  const active = tasks.filter((t) => t.status === "running" || t.status === "pending").length;
+  const badge = $("header-badge");
+  badge.hidden = active === 0;
+  badge.textContent = active === 1 ? "1 download em andamento" : `${active} downloads em andamento`;
+}
+
 async function pollTasks() {
   try {
-    renderTasks(await api.get("/api/tasks"));
+    const tasks = await api.get("/api/tasks");
+    renderTasks(tasks);
+    updateHeaderBadge(tasks);
   } catch (err) {
     /* mantem a ultima lista em caso de falha temporaria */
   }
 }
+
+// ---- busca de anime -----------------------------------------------------------
 
 function setSearchStatus(message) {
   $("search-status").textContent = message;
@@ -514,7 +672,7 @@ async function startAssemblyDownload(plan, term, idioma) {
   if (!labels.length) { setAssembleStatus("Nada para baixar."); return; }
   try {
     const res = await api.post("/api/assemble_download", { term, idioma, wanted: labels, options: {} });
-    setAssembleStatus("Tarefa criada: " + res.task_id.slice(0, 8));
+    setAssembleStatus("Tarefa criada: " + res.task_id.slice(0, 8) + " (veja a aba Tarefas)");
     await pollTasks();
   } catch (err) {
     setAssembleStatus("Erro: " + err.message);
@@ -528,7 +686,12 @@ function renderSearchItem(item) {
   info.appendChild(el("div", { class: "muted", text: `${item.site} · ${item.idioma}` }));
   const actions = el("div", { class: "search-actions" });
   const use = el("button", { class: "ghost", text: "Usar" });
-  use.addEventListener("click", () => { $("url").value = item.url; analyze(); });
+  use.addEventListener("click", () => {
+    // anime vai para a aba Video (series sao kind=video na deteccao)
+    $("url-video").value = item.url;
+    selectTab($("tab-video"));
+    analyzeInto(ANALYZERS.find((cfg) => cfg.url.id === "url-video"));
+  });
   const verify = el("button", { class: "ghost", text: "Verificar qualidade" });
   const quality = el("span", { class: "muted" });
   verify.addEventListener("click", async () => {
@@ -569,8 +732,6 @@ $("search-btn").addEventListener("click", searchAnime);
 $("search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchAnime(); });
 $("assemble-btn").addEventListener("click", assembleInfo);
 $("sites-save").addEventListener("click", saveSites);
-$("analyze").addEventListener("click", analyze);
-$("url").addEventListener("keydown", (event) => { if (event.key === "Enter") analyze(); });
 $("refresh").addEventListener("click", pollTasks);
 loadSites();
 pollTasks();
