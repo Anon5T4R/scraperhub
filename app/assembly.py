@@ -5,6 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
+from .discovery import discover_sites, relevante
 from .scrapers.animestream import AnimeStreamScraper
 from .scrapers.animestream_net import run_downloads
 from .scrapers.base import ProgressCb, ScraperError
@@ -56,6 +57,21 @@ def _first_ep(eps: dict[str, str]) -> str | None:
     return next(iter(eps.values()))
 
 
+def _render_and_enumerate(url: str) -> dict:
+    """Renderiza a pagina com Playwright e enumera episodios genericamente."""
+    from .scrapers import browser
+
+    try:
+        with browser.run(headless=True) as context:
+            page = context.new_page()
+            page.goto(url, timeout=45000, wait_until="domcontentloaded")
+            page.wait_for_timeout(6000)
+            html = page.content()
+    except Exception as exc:
+        raise ScraperError(f"Falha ao renderizar {url}: {exc}") from exc
+    return _SCRAPER.generic_info(url, html=html)
+
+
 def _probe(result: dict) -> dict:
     """Coleta eps e qualidade de uma fonte; erro individual nao aborta o plano."""
     url = str(result.get("url") or "")
@@ -68,8 +84,17 @@ def _probe(result: dict) -> dict:
         "eps": {},
         "qualidade": None,
     }
+    if result.get("descoberta"):
+        fonte["descoberta"] = True
     try:
-        info = _SCRAPER.get_info(url)
+        try:
+            info = _SCRAPER.get_info(url)
+        except ScraperError:
+            # host desconhecido (achado via busca web): enumeracao generica
+            info = _SCRAPER.generic_info(url)
+            if len(info.get("items") or []) < 2:
+                # provavel SPA: renderiza com navegador e tenta de novo
+                info = _render_and_enumerate(url)
     except Exception as exc:
         fonte["erro"] = str(exc)[:150]
         return fonte
@@ -96,9 +121,20 @@ def plan_season(term: str, idioma: str = "qualquer") -> dict:
     """Monta a temporada: fontes rankeadas e a melhor fonte por episodio."""
     resultados, _ = search_all(term)
     fontes = [r for r in resultados if _SCRAPER.match(str(r.get("url") or ""))]
+    # filtro de relevancia: alguns sites retornam qualquer coisa na busca
+    fontes = [r for r in fontes if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)]
     if idioma and idioma.lower() != "qualquer":
         alvo = idioma.lower()
         fontes = [r for r in fontes if alvo in str(r.get("idioma") or "").lower()]
+    # descoberta web quando as fontes conhecidas nao bastam (minimo 2)
+    descobertas: list[dict] = []
+    if len({str(r.get("site")) for r in fontes}) < 2:
+        conhecidos = [str(r.get("url")) for r in resultados] + [
+            str(r.get("url")) for r in fontes
+        ]
+        for achado in discover_sites(term, conhecidos):
+            descobertas.append({**achado, "idioma": "web (descoberta)", "descoberta": True})
+        fontes.extend(descobertas[: 2])
     # dedupe por URL e diversidade: max 2 por site (round-robin), para um
     # site com muitas variantes nao ocupar todas as vagas antes dos demais
     unicos: list[dict] = []
@@ -158,6 +194,7 @@ def plan_season(term: str, idioma: str = "qualquer") -> dict:
                 "eps_total": len(f["eps"]),
                 "qualidade": f["qualidade"],
                 **({"erro": f["erro"]} if "erro" in f else {}),
+                **({"descoberta": True} if f.get("descoberta") else {}),
             }
             for f in coletadas
         ],
@@ -187,6 +224,9 @@ def download_season(
             break
     by_label = {ep["label"]: ep for ep in episodios}
     provenance: dict[str, dict] = {}
+    # cache de fontes mortas na tarefa: uma URL que falhou nao e martelada
+    # de novo nos episodios seguintes (pula direto pra alternativa)
+    mortas: set[str] = set()
 
     def download_one(_item_id: str, label: str) -> None:
         episode = by_label[label]
@@ -194,14 +234,20 @@ def download_season(
         if episode.get("escolhido"):
             candidatos.append(episode["escolhido"])
         candidatos.extend(episode.get("alternativas") or [])
-        if not candidatos:
-            provenance[label] = {"label": label, "fonte": None, "erro": "sem fonte"}
-            raise ScraperError(f"{label}: nenhuma fonte disponivel")
+        vivos = [c for c in candidatos if c["url"] not in mortas]
+        if not vivos:
+            provenance[label] = {
+                "label": label,
+                "fonte": None,
+                "erro": "todas as fontes falharam nesta temporada (cache de fontes mortas)",
+            }
+            raise ScraperError(f"{label}: todas as fontes ja falharam nesta temporada")
         erros: list[str] = []
-        for candidato in candidatos:
+        for candidato in vivos:
             try:
                 _SCRAPER.download_episode(candidato["url"], title, label, progress_cb)
             except ScraperError as exc:
+                mortas.add(candidato["url"])
                 erros.append(f"{candidato['site']}: {str(exc)[-60:]}")
                 continue
             provenance[label] = {

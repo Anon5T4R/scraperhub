@@ -101,12 +101,58 @@ class AnimeStreamScraper(Scraper):
     ) -> None:
         """Baixa um episodio avulso (usado pela montagem multi-fonte)."""
         host_name = host(episode_url)
-        if host_name == "animeq.cloud":
-            self._episode_animeq(episode_url, title, label, progress_cb)
-        elif host_name == "otakubr.com":
+        if host_name == "otakubr.com":
             self._episode_otakubr(episode_url, title, label, progress_cb, ensure_ffmpeg())
-        else:
+        elif host_name == "animesdigital.org":
             self._episode_animesdigital(episode_url, title, label, progress_cb, ensure_ffmpeg())
+        else:
+            # animeq e qualquer outro site generico: extracao HTML direta
+            self._episode_animeq(episode_url, title, label, progress_cb)
+
+    def generic_info(self, url: str, html: str | None = None) -> dict:
+        """Enumera episodios de uma pagina de serie em host desconhecido.
+
+        Heuristica: links do mesmo host cujo ultimo segmento parece
+        episodio (contem 'episod'/'episode'/'ep' ou termina em numero).
+        Aceita HTML pre-renderizado (Playwright) para sites JS.
+        """
+        if html is None:
+            html = fetch(url)
+        soup = BeautifulSoup(html, "lxml")
+        base_host = urlparse(url).hostname or ""
+        items: list[dict] = []
+        seen: set[str] = set()
+        for link in soup.select("a[href]"):
+            href = link.get("href") or ""
+            absolute = urljoin(url, href)
+            parsed = urlparse(absolute)
+            if parsed.hostname != base_host:
+                continue
+            segmento = (parsed.path or "").rstrip("/").split("/")[-1].lower()
+            if not segmento or absolute in seen:
+                continue
+            parece_ep = (
+                "episod" in segmento
+                or "episode" in segmento
+                or re.search(r"(^|[-_])ep[-_]?\d", segmento)
+                or re.search(r"\d+$", segmento)
+            )
+            if not parece_ep:
+                continue
+            seen.add(absolute)
+            numero = re.findall(r"\d+", segmento)
+            label = f"Ep {int(numero[-1]):02d}" if numero else f"Ep {segmento[:20]}"
+            if any(item["label"] == label for item in items):
+                continue
+            items.append({"id": absolute, "label": label})
+        if not items:
+            raise ScraperError("Nenhum episodio encontrado nesta pagina (host desconhecido).")
+        h1 = soup.find("h1")
+        return {
+            "title": h1.get_text(strip=True) if h1 and h1.get_text(strip=True) else urlparse(url).hostname or "Anime",
+            "cover": None,
+            "items": items,
+        }
 
     def first_source(self, episode_url: str) -> str | None:
         """Primeira fonte de video resolvivel do episodio (mp4/m3u8), ou None."""
