@@ -111,6 +111,15 @@ NOTAS:
 - Sem rede nenhuma no build: o exe ainda baixa o Chromium/ffmpeg sozinho na
   primeira execucao, se faltarem no pacote (fallback do codigo).
 
+## Release
+
+Fluxo manual (sem CI). A tag `vX.Y.Z` e a fonte da verdade da versao.
+
+1. Bump da versao em `app/main.py` (`FastAPI(version="X.Y.Z")`) para a nova tag.
+2. Commit das mudancas + do bump.
+3. Tag: `git tag vX.Y.Z`.
+4. Push: `git push origin master && git push origin vX.Y.Z`.
+
 ## Avisos
 
 - **DRM**: videos protegidos por DRM (Widevine/criptografia) nao sao
