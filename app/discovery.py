@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from .scrapers.animestream_net import USER_AGENT
 
 DDG_URL = "https://html.duckduckgo.com/html/"
+GOOGLE_URL = "https://www.google.com/search"
 # hosts que nunca sao fonte de episodio baixavel
 BLOCKLIST = (
     "youtube.com", "youtu.be", "reddit.com", "myanimelist.net", "anilist.co",
@@ -22,8 +23,8 @@ ANIME_PATH_RE = re.compile(r"^/anime/(?:a/)?[^/]+", re.IGNORECASE)
 MAX_HOSTS = 6
 
 
-def _ddg_results(term: str) -> list[str]:
-    """URLs de resultado da busca HTML do DuckDuckGo."""
+def _search_results(term: str) -> list[str]:
+    """URLs de resultado da busca HTML do DuckDuckGo, com fallback pro Google."""
     try:
         response = httpx.get(
             DDG_URL,
@@ -46,6 +47,31 @@ def _ddg_results(term: str) -> list[str]:
                 urls.append(decoded)
         elif href.startswith("http"):
             urls.append(href)
+    return urls or _google_results(term)
+
+
+def _google_results(term: str) -> list[str]:
+    """URLs de resultado da busca do Google (fallback quando o DDG nao retorna nada)."""
+    try:
+        response = httpx.get(
+            GOOGLE_URL,
+            params={"q": f"{term} anime episodio online assistir", "num": 20},
+            headers={"User-Agent": USER_AGENT},
+            follow_redirects=True,
+            timeout=20,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return []
+    soup = BeautifulSoup(response.text, "lxml")
+    urls: list[str] = []
+    for link in soup.select("a[href]"):
+        href = link.get("href") or ""
+        if "/url?q=" not in href:
+            continue
+        decoded = parse_qs(urlparse(href).query).get("q", [""])[0]
+        if decoded.startswith("http"):
+            urls.append(decoded)
     return urls
 
 
@@ -73,7 +99,7 @@ def discover_sites(term: str, conhecidos: list[str]) -> list[dict]:
     """
     conhecidos_set = {(urlparse(u).hostname or "").removeprefix("www.") for u in conhecidos}
     candidatos: list[str] = []
-    for url in _ddg_results(term):
+    for url in _search_results(term):
         if not _host_ok(url, conhecidos_set):
             continue
         parsed = urlparse(url)

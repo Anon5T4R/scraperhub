@@ -117,12 +117,17 @@ class FileHostScraper(Scraper):
         """Segue redirects manualmente (Location relativo quebra o stream do httpx)."""
         current = url
         for _ in range(10):
-            response = httpx.head(
-                current,
-                headers={"User-Agent": USER_AGENT},
-                follow_redirects=False,
-                timeout=30,
-            )
+            try:
+                response = httpx.head(
+                    current,
+                    headers={"User-Agent": USER_AGENT},
+                    follow_redirects=False,
+                    timeout=30,
+                )
+            except httpx.HTTPError:
+                # servidor que nao responde HEAD (405/403): o GET com
+                # follow_redirects do _download_stream resolve o redirect
+                return url
             location = response.headers.get("location")
             if not location or response.status_code not in (301, 302, 303, 307, 308):
                 return current

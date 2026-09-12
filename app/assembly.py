@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from urllib.parse import urlparse
 
 from .discovery import discover_sites, relevante
@@ -12,7 +13,6 @@ from .scrapers.base import ProgressCb, ScraperError
 from .search import probe_quality, search_all
 
 MAX_FONTES = 4
-_SCRAPER = AnimeStreamScraper()
 
 
 def _label_num(label: str) -> int | None:
@@ -57,7 +57,7 @@ def _first_ep(eps: dict[str, str]) -> str | None:
     return next(iter(eps.values()))
 
 
-def _render_and_enumerate(url: str) -> dict:
+def _render_and_enumerate(url: str, scraper: AnimeStreamScraper) -> dict:
     """Renderiza a pagina com Playwright e enumera episodios genericamente."""
     from .scrapers import browser
 
@@ -69,10 +69,10 @@ def _render_and_enumerate(url: str) -> dict:
             html = page.content()
     except Exception as exc:
         raise ScraperError(f"Falha ao renderizar {url}: {exc}") from exc
-    return _SCRAPER.generic_info(url, html=html)
+    return scraper.generic_info(url, html=html)
 
 
-def _probe(result: dict) -> dict:
+def _probe(result: dict, scraper: AnimeStreamScraper) -> dict:
     """Coleta eps e qualidade de uma fonte; erro individual nao aborta o plano."""
     url = str(result.get("url") or "")
     site = str(result.get("site") or urlparse(url).hostname or "")
@@ -88,13 +88,13 @@ def _probe(result: dict) -> dict:
         fonte["descoberta"] = True
     try:
         try:
-            info = _SCRAPER.get_info(url)
+            info = scraper.get_info(url)
         except ScraperError:
             # host desconhecido (achado via busca web): enumeracao generica
-            info = _SCRAPER.generic_info(url)
+            info = scraper.generic_info(url)
             if len(info.get("items") or []) < 2:
                 # provavel SPA: renderiza com navegador e tenta de novo
-                info = _render_and_enumerate(url)
+                info = _render_and_enumerate(url, scraper)
     except Exception as exc:
         fonte["erro"] = str(exc)[:150]
         return fonte
@@ -109,7 +109,7 @@ def _probe(result: dict) -> dict:
     first = _first_ep(fonte["eps"])
     if first:
         try:
-            source = _SCRAPER.first_source(first)
+            source = scraper.first_source(first)
         except Exception:
             source = None  # fonte sem primeira linha valida: prioridade menor
         if source:
@@ -117,10 +117,13 @@ def _probe(result: dict) -> dict:
     return fonte
 
 
-def plan_season(term: str, idioma: str = "qualquer") -> dict:
+def plan_season(
+    term: str, idioma: str = "qualquer", scraper: AnimeStreamScraper | None = None
+) -> dict:
     """Monta a temporada: fontes rankeadas e a melhor fonte por episodio."""
+    scraper = scraper or AnimeStreamScraper()
     resultados, _ = search_all(term)
-    fontes = [r for r in resultados if _SCRAPER.match(str(r.get("url") or ""))]
+    fontes = [r for r in resultados if scraper.match(str(r.get("url") or ""))]
     # filtro de relevancia: alguns sites retornam qualquer coisa na busca
     fontes = [r for r in fontes if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)]
     if idioma and idioma.lower() != "qualquer":
@@ -163,7 +166,7 @@ def plan_season(term: str, idioma: str = "qualquer") -> dict:
         rodada += 1
     fontes = unicos[:MAX_FONTES]
     with ThreadPoolExecutor(max_workers=MAX_FONTES) as pool:
-        coletadas = list(pool.map(_probe, fontes))
+        coletadas = list(pool.map(partial(_probe, scraper=scraper), fontes))
     ordem = sorted(
         range(len(coletadas)),
         key=lambda i: (-_quality_score(coletadas[i]["qualidade"]), -len(coletadas[i]["eps"]), i),
@@ -208,9 +211,11 @@ def download_season(
     wanted: list[str] | None,
     progress_cb: ProgressCb,
     options: dict | None = None,
+    scraper: AnimeStreamScraper | None = None,
 ) -> None:
     """Baixa a temporada montada, com fallback por episodio e relatorio de procedencia."""
-    plan = plan_season(term, idioma)
+    scraper = scraper or AnimeStreamScraper()
+    plan = plan_season(term, idioma, scraper)
     episodios = plan["episodios"]
     if wanted:
         pedidos = set(wanted)
@@ -245,7 +250,7 @@ def download_season(
         erros: list[str] = []
         for candidato in vivos:
             try:
-                _SCRAPER.download_episode(candidato["url"], title, label, progress_cb)
+                scraper.download_episode(candidato["url"], title, label, progress_cb)
             except ScraperError as exc:
                 mortas.add(candidato["url"])
                 erros.append(f"{candidato['site']}: {str(exc)[-60:]}")
@@ -274,7 +279,7 @@ def download_season(
     ]
     if pendentes:
         progress_cb(0, f"{len(pendentes)} episodio(s) sem fonte — buscando na web...")
-        extras = _descobrir_extras(term, plan)
+        extras = _descobrir_extras(term, plan, scraper)
         if extras:
             for fonte in extras:
                 progress_cb(0, f"nova fonte da web: {fonte['site']} ({len(fonte['eps'])} eps)")
@@ -282,7 +287,7 @@ def download_season(
                 for fonte in extras:
                     if label in fonte["eps"] and fonte["eps"][label] not in mortas:
                         try:
-                            _SCRAPER.download_episode(fonte["eps"][label], title, label, progress_cb)
+                            scraper.download_episode(fonte["eps"][label], title, label, progress_cb)
                         except ScraperError:
                             mortas.add(fonte["eps"][label])
                             continue
@@ -310,7 +315,7 @@ def download_season(
         raise ScraperError("Resumo da temporada: " + "; ".join(linhas))
 
 
-def _descobrir_extras(term: str, plan: dict) -> list[dict]:
+def _descobrir_extras(term: str, plan: dict, scraper: AnimeStreamScraper) -> list[dict]:
     """Busca na web fontes extras para os episodios que falharam.
 
     Sem filtro de idioma: fontes descobertas nao declaram idioma e sao
@@ -320,7 +325,9 @@ def _descobrir_extras(term: str, plan: dict) -> list[dict]:
     achados = discover_sites(term, conhecidos)
     extras: list[dict] = []
     with ThreadPoolExecutor(max_workers=MAX_FONTES) as pool:
-        for fonte in pool.map(_probe, [{**a, "descoberta": True} for a in achados]):
+        for fonte in pool.map(
+            partial(_probe, scraper=scraper), [{**a, "descoberta": True} for a in achados]
+        ):
             if fonte.get("erro") or not fonte["eps"]:
                 continue
             extras.append(fonte)
