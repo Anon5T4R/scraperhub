@@ -121,6 +121,8 @@ Fluxo manual (sem CI). A tag `vX.Y.Z` e a fonte da verdade da versao.
 2. Commit das mudancas + do bump.
 3. Tag: `git tag vX.Y.Z`.
 4. Push: `git push origin master && git push origin vX.Y.Z`.
+5. Release no GitHub (so a tag NAO marca "Latest"):
+   `gh release create vX.Y.Z -R Anon5T4R/scraperhub --latest --title "ScraperHub vX.Y.Z" --notes "..."`.
 
 ## Avisos
 
