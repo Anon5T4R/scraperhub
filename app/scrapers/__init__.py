@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 from .base import Scraper, ScraperError
 from .animestream import AnimeStreamScraper
 from .ebook import EbookScraper
+from .enanime import EnAnimeScraper
 from .filehost import FileHostScraper
 from .gallery import GalleryScraper
 from .mangafire import MangaFireScraper
@@ -24,6 +25,7 @@ REGISTRY: list[Scraper] = [
     EbookScraper(),
     FileHostScraper(),
     AnimeStreamScraper(),
+    EnAnimeScraper(),
     MirrorScraper(),
     VideoScraper(),
 ]

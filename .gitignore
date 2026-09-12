@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 downloads/
 dist/
+build/
 srv.out.log
 srv.err.log
 out.log

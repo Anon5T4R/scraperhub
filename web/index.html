@@ -183,6 +183,7 @@
 
 <nav class="tabs" role="tablist" aria-label="Tipo de conteudo">
   <button class="tab" role="tab" id="tab-anime" aria-controls="panel-anime" aria-selected="true">Anime</button>
+  <button class="tab" role="tab" id="tab-enanime" aria-controls="panel-enanime" aria-selected="false" tabindex="-1">Anime EN</button>
   <button class="tab" role="tab" id="tab-manga" aria-controls="panel-manga" aria-selected="false" tabindex="-1">Mang&aacute;</button>
   <button class="tab" role="tab" id="tab-video" aria-controls="panel-video" aria-selected="false" tabindex="-1">V&iacute;deo</button>
   <button class="tab" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="false" tabindex="-1">Arquivos &amp; outros</button>
@@ -221,6 +222,26 @@
         </div>
       </details>
     </section>
+  </section>
+
+  <!-- Anime EN -->
+  <section class="panel" role="tabpanel" id="panel-enanime" aria-labelledby="tab-enanime" hidden>
+    <section class="card">
+      <label for="url-enanime">Cole o link da s&eacute;rie (legendas em ingl&ecirc;s)</label>
+      <p class="panel-hint">Agregadores internacionais: animeheaven.me, gogoanime.is e 9anime.org.lv. Epis&oacute;dios com servidor vidmoly s&atilde;o baixados em 1080p.</p>
+      <div class="row" style="margin-top:8px">
+        <input id="url-enanime" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
+        <select id="force-enanime" title="Forcar um scraper especifico">
+          <option value="">Auto</option>
+          <option value="mirror">Espelho de site</option>
+          <option value="ebook">E-book</option>
+          <option value="gallery">Galeria</option>
+        </select>
+        <button id="analyze-enanime">Analisar</button>
+      </div>
+      <p id="status-enanime" class="muted" style="margin:10px 0 0"></p>
+    </section>
+    <section id="result-enanime" class="card hidden"></section>
   </section>
 
   <!-- Manga -->
@@ -375,7 +396,7 @@ function formatDuration(seconds) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
-const ANALYZERS = ["manga", "video", "files"].map((name) => ({
+const ANALYZERS = ["enanime", "manga", "video", "files"].map((name) => ({
   url: $(`url-${name}`),
   force: $(`force-${name}`),
   button: $(`analyze-${name}`),

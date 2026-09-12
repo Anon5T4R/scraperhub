@@ -66,6 +66,12 @@ baixar o navegador usado pelo scraper de manga.
   alguns episodios podem estar restritos pelo dono do arquivo). Cole o link
   da pagina do anime: a UI lista todos os episodios com selecao multipla
   (por temporada no otakubr, `S1E01`).
+- **Anime EN** (`enanime`): series em agregadores em ingles — animeheaven.me
+  (MP4 direto do proprio CDN), gogoanime.is e 9anime.org.lv (episodios via
+  servidor vidmoly, resolvido pelo yt-dlp como HLS). Cole o link da pagina
+  da serie: a UI lista todos os episodios com selecao multipla (`Ep NN`).
+  Quando o episodio so tem players protegidos (megaplay e afins), o download
+  falha com aviso claro.
 - **Video** (`video`): fallback generico para qualquer URL http(s), usando
   `yt-dlp` (API Python embutida no executavel). O `ffmpeg` e baixado
   automaticamente ao lado do exe na primeira vez que salvar um video
