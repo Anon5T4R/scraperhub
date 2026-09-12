@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from .base import Scraper, ScraperError
+from .base import Scraper, ScraperError, TaskCancelled
 from .animestream import AnimeStreamScraper
 from .ebook import EbookScraper
 from .enanime import EnAnimeScraper
@@ -69,4 +69,4 @@ def get_scraper(scraper_id: str) -> Scraper | None:
     return None
 
 
-__all__ = ["REGISTRY", "Scraper", "ScraperError", "detect", "get_scraper"]
+__all__ = ["REGISTRY", "Scraper", "ScraperError", "TaskCancelled", "detect", "get_scraper"]

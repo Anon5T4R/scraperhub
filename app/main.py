@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .assembly import download_season, plan_season
-from .scrapers import Scraper, ScraperError, detect, get_scraper, normalize_url
+from .scrapers import Scraper, ScraperError, TaskCancelled, detect, get_scraper, normalize_url
 from .search import load_sites, save_sites, search_all, verify_quality
 from .tasks import TaskManager
 
@@ -148,6 +148,8 @@ def api_download(payload: DownloadRequest) -> dict:
 
     def run(task_id: str) -> None:
         def progress_cb(progress: int, message: str) -> None:
+            if manager.is_cancelled(task_id):
+                raise TaskCancelled()
             manager.update_progress(task_id, progress=progress, current_item=message, log=message)
 
         scraper.download(url, payload.items, progress_cb, payload.options)
@@ -168,6 +170,14 @@ def api_task(task_id: str) -> dict:
     if task is None:
         raise HTTPException(status_code=404, detail="Tarefa nao encontrada.")
     return task
+
+
+@app.post("/api/tasks/{task_id}/cancel")
+def api_task_cancel(task_id: str) -> dict:
+    """Marca uma tarefa para cancelamento."""
+    if not manager.cancel(task_id):
+        raise HTTPException(status_code=404, detail="Tarefa nao encontrada ou ja finalizada.")
+    return {"ok": True}
 
 
 @app.post("/api/search")
@@ -222,6 +232,8 @@ def api_assemble_download(payload: AssembleDownloadRequest) -> dict:
 
     def run(task_id: str) -> None:
         def progress_cb(progress: int, message: str) -> None:
+            if manager.is_cancelled(task_id):
+                raise TaskCancelled()
             manager.update_progress(task_id, progress=progress, current_item=message, log=message)
 
         download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options)

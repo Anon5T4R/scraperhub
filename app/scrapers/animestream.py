@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import httpx
@@ -217,6 +218,11 @@ class AnimeStreamScraper(Scraper):
         word = re.sub(r"[^a-z0-9-]", "", tail.split("-")[-1])
         return word or "extra"
 
+    def _episode_label(self, ep: str) -> str:
+        """Rotulo do episodio com numero zero-padded ('Ep 03'), ou o sufixo."""
+        num = self._episode_num(ep)
+        return f"Ep {int(num):02d}" if num.isdigit() else f"Ep {num}"
+
     @staticmethod
     def _page_num(href: str, slug: str) -> int | None:
         match = re.search(rf"/anime/{re.escape(slug)}/(\d+)/?$", href)
@@ -228,9 +234,18 @@ class AnimeStreamScraper(Scraper):
         seen: set[str] = set()
         episodes: list[str] = []
         title = "Anime sem titulo"
-        for page in range(1, MAX_PAGES + 1):
-            page_url = base if page == 1 else f"{base}{page}/"
-            soup = BeautifulSoup(fetch(page_url), "lxml")
+
+        def fetch_page(page: int) -> BeautifulSoup | None:
+            try:
+                page_url = base if page == 1 else f"{base}{page}/"
+                return BeautifulSoup(fetch(page_url), "lxml")
+            except ScraperError:
+                return None  # pagina inexistente/erro: nao aborta as demais
+
+        def collect(soup: BeautifulSoup | None) -> None:
+            nonlocal title
+            if soup is None:
+                return
             h1 = soup.find("h1")
             if h1 and h1.get_text(strip=True):
                 title = h1.get_text(strip=True)
@@ -239,13 +254,24 @@ class AnimeStreamScraper(Scraper):
                 if href not in seen:
                     seen.add(href)
                     episodes.append(href)
-            pagination = [
-                self._page_num(a.get("href") or "", slug)
-                for a in soup.select(f'a[href*="/anime/{slug}/"]')
-            ]
-            if page + 1 not in pagination:
-                break
-        items = [{"id": ep, "label": f"Ep {self._episode_num(ep)}"} for ep in episodes]
+
+        # pagina 1: titulo, episodios e numeros de paginacao
+        soup = fetch_page(1)
+        collect(soup)
+        pagination = [
+            self._page_num(a.get("href") or "", slug)
+            for a in soup.select(f'a[href*="/anime/{slug}/"]')
+        ] if soup is not None else []
+        max_page = max(pagination) if pagination else 1
+
+        # paginas restantes em paralelo (ate MAX_PAGES)
+        restantes = [p for p in range(2, min(max_page, MAX_PAGES) + 1)]
+        if restantes:
+            with ThreadPoolExecutor(max_workers=min(len(restantes), 8)) as pool:
+                for page_soup in pool.map(fetch_page, restantes):
+                    collect(page_soup)
+
+        items = [{"id": ep, "label": self._episode_label(ep)} for ep in episodes]
         if not items:
             raise ScraperError("Nenhum episodio encontrado nesta pagina.")
         return {"title": title, "cover": None, "items": items}

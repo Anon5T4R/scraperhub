@@ -9,7 +9,6 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from .scrapers import detect
-from .scrapers.animestream import AnimeStreamScraper
 from .scrapers.animestream_net import USER_AGENT, SilentLogger
 from .scrapers.base import app_root
 
@@ -18,6 +17,7 @@ ANIME_PATH_RE = re.compile(r"^/anime/(?:a/)?[^/]+")
 MAX_RESULTS = 20
 REQUEST_TIMEOUT = 20
 LANGUAGE_PADRAO = "Legendado (padrao do site)"
+_QUALITY_CACHE: dict[str, str] = {}
 
 
 def default_sites() -> list[str]:
@@ -129,8 +129,15 @@ def _link_title(link: Tag, url: str) -> str:
 
 
 def _idioma(text: str) -> str:
-    """Dublado quando o slug/titulo indica; caso contrario o padrao do site."""
-    return "Dublado" if "dublado" in text.lower() else LANGUAGE_PADRAO
+    """Detecta o idioma pelo slug/titulo; fallback para o padrao do site."""
+    low = text.lower()
+    if "dublado" in low:
+        return "Dublado"
+    if any(m in low for m in ("espanol", "español", "latino", "sub es")):
+        return "Espanhol"
+    if any(m in low for m in ("english", "sub eng", "eng sub", "subbed")):
+        return "Ingles"
+    return LANGUAGE_PADRAO
 
 
 def verify_quality(url: str) -> dict:
@@ -140,7 +147,7 @@ def verify_quality(url: str) -> dict:
         return {"suporte": False, "motivo": "Nenhum scraper reconheceu esta URL."}
     if scraper.kind != "video":
         return {"suporte": False, "motivo": "verificacao disponivel apenas para series"}
-    if not isinstance(scraper, AnimeStreamScraper):
+    if not hasattr(scraper, "first_source"):
         return {"suporte": False, "motivo": "verificacao disponivel apenas para series de anime"}
     try:
         info = scraper.get_info(url)
@@ -164,6 +171,8 @@ def verify_quality(url: str) -> dict:
 
 def probe_quality(source: str) -> str:
     """Maior resolucao (altura) entre os formatos reportados pelo yt-dlp."""
+    if source in _QUALITY_CACHE:
+        return _QUALITY_CACHE[source]
     import time
 
     import yt_dlp
@@ -183,12 +192,17 @@ def probe_quality(source: str) -> str:
             break
         except Exception:
             if attempt:
-                return "desconhecida"
+                result = "desconhecida"
+                _QUALITY_CACHE[source] = result
+                return result
             time.sleep(2)
     formats = (info or {}).get("formats") or []
     heights = [int(f["height"]) for f in formats if f.get("height")]
     if heights:
-        return f"{max(heights)}p"
-    # playlist unica sem resolucao publicada (comum nesses CDNs);
-    # o download pega sempre a unica faixa disponivel
-    return "unica"
+        result = f"{max(heights)}p"
+    else:
+        # playlist unica sem resolucao publicada (comum nesses CDNs);
+        # o download pega sempre a unica faixa disponivel
+        result = "unica"
+    _QUALITY_CACHE[source] = result
+    return result

@@ -52,22 +52,13 @@ class GalleryScraper(Scraper):
         return bool(GALLERY_HOST_RE.search(url))
 
     def get_info(self, url: str) -> dict:
-        from gallery_dl import extractor, job
-        from gallery_dl.extractor.message import Message
-
+        from gallery_dl import extractor
         if extractor.find(url) is None:
             raise ScraperError("URL nao reconhecida pelo gallery-dl.")
-        data_job = job.DataJob(url, file=None)
-        data_job.run()
-        for msg in data_job.data:
-            if len(msg) == 2 and msg[0] == -1:
-                detail = msg[1].get("message") or msg[1].get("error") or "erro desconhecido"
-                raise ScraperError(f"Falha ao analisar a galeria: {detail}")
-        images = [msg for msg in data_job.data if len(msg) == 3 and msg[0] == Message.Url]
         return {
-            "title": self._title(data_job.data, url),
+            "title": sanitize(urlparse(url).netloc or "galeria"),
             "cover": None,
-            "items": [{"id": "1", "label": f"{len(images)} imagens"}],
+            "items": [{"id": "1", "label": "Galeria de imagens"}],
         }
 
     def download(

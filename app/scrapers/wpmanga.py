@@ -73,9 +73,6 @@ class WpMangaScraper(Scraper):
     @staticmethod
     def _homepage(url: str) -> str:
         parsed = urlparse(url)
-        if parsed.path and parsed.path != "/":
-            # link de capitulo -> raiz do site
-            return f"{parsed.scheme}://{parsed.netloc}/"
         return f"{parsed.scheme}://{parsed.netloc}/"
 
     def _get(self, client: httpx.Client, url: str) -> BeautifulSoup:

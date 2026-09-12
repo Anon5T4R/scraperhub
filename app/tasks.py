@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from .scrapers.base import TaskCancelled
+
 MAX_LOG_LINES = 50
 TaskRun = Callable[[str], None]
 
@@ -30,15 +32,34 @@ class TaskManager:
                 "current_item": None,
                 "log": [],
                 "error": None,
+                "cancel": False,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         self._executor.submit(self._run, task_id, run)
         return task_id
 
+    def cancel(self, task_id: str) -> bool:
+        """Marca a tarefa para cancelamento; False se ja finalizada ou inexistente."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None or task["status"] in ("done", "error", "cancelled"):
+                return False
+            task["cancel"] = True
+            return True
+
+    def is_cancelled(self, task_id: str) -> bool:
+        """True se a tarefa foi marcada para cancelamento."""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            return bool(task and task.get("cancel"))
+
     def _run(self, task_id: str, run: TaskRun) -> None:
         self.update_progress(task_id, status="running")
         try:
             run(task_id)
+        except TaskCancelled:
+            self.update_progress(task_id, status="cancelled", current_item=None, log="Cancelada", error=None)
+            return
         except Exception as exc:  # noqa: BLE001 - erro do scraper vira estado da tarefa
             message = str(exc) or exc.__class__.__name__
             self.update_progress(task_id, log=message, status="error", error=message)

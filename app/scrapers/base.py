@@ -24,6 +24,10 @@ class ScraperError(Exception):
     """Erro tipado levantado por um scraper, com mensagem amigavel."""
 
 
+class TaskCancelled(Exception):
+    """Levantado quando o usuario cancela uma tarefa em andamento."""
+
+
 class Scraper:
     """Contrato comum a todos os scrapers."""
 

@@ -10,9 +10,12 @@ import httpx
 
 from .base import app_root
 
-FFMPEG_ZIP_URL = (
+# branch de release estavel (9.0) primeiro; master como fallback
+FFMPEG_ZIP_URLS = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
-    "ffmpeg-master-latest-win64-gpl.zip"
+    "ffmpeg-n9.0-latest-win64-gpl-9.0.zip",
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/"
+    "ffmpeg-master-latest-win64-gpl.zip",
 )
 
 
@@ -38,19 +41,21 @@ def ensure_ffmpeg() -> str | None:
     if path:
         return path
     target = _bundled_ffmpeg()
-    try:
-        with httpx.Client(follow_redirects=True, timeout=600) as client:
-            with client.stream("GET", FFMPEG_ZIP_URL) as response:
-                response.raise_for_status()
-                zip_path = target.with_suffix(".zip")
-                with zip_path.open("wb") as handle:
-                    for chunk in response.iter_bytes():
-                        handle.write(chunk)
-        with zipfile.ZipFile(zip_path) as archive:
-            member = next(m for m in archive.namelist() if m.endswith("/bin/ffmpeg.exe"))
-            target.write_bytes(archive.read(member))
-        zip_path.unlink(missing_ok=True)
-        return str(target)
-    except Exception:
-        # sem rede/arquivo: segue sem ffmpeg (qualidade reduzida)
-        return None
+    for url in FFMPEG_ZIP_URLS:
+        try:
+            with httpx.Client(follow_redirects=True, timeout=600) as client:
+                with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    zip_path = target.with_suffix(".zip")
+                    with zip_path.open("wb") as handle:
+                        for chunk in response.iter_bytes():
+                            handle.write(chunk)
+            with zipfile.ZipFile(zip_path) as archive:
+                member = next(m for m in archive.namelist() if m.endswith("/bin/ffmpeg.exe"))
+                target.write_bytes(archive.read(member))
+            zip_path.unlink(missing_ok=True)
+            return str(target)
+        except Exception:
+            continue  # tenta a proxima URL
+    # sem rede/arquivo: segue sem ffmpeg (qualidade reduzida)
+    return None

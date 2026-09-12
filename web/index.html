@@ -158,6 +158,7 @@
   .badge.running { background: #1d3a5c; color: #9cc4ff; }
   .badge.done { background: #14382a; color: var(--ok); }
   .badge.error { background: #3a1b1b; color: var(--err); }
+  .badge.cancelled { background: #3a3a1b; color: #d4d46a; }
   .bar { height: 8px; background: #0c0e12; border-radius: 999px; overflow: hidden; }
   .fill { height: 100%; background: var(--accent); transition: width .3s ease; }
   .fill.done { background: var(--ok); }
@@ -233,6 +234,9 @@
         <input id="url-enanime" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
         <select id="force-enanime" title="Forcar um scraper especifico">
           <option value="">Auto</option>
+          <option value="enanime">Anime EN</option>
+          <option value="animestream">Anime (serie)</option>
+          <option value="video">Video (yt-dlp)</option>
           <option value="mirror">Espelho de site</option>
           <option value="ebook">E-book</option>
           <option value="gallery">Galeria</option>
@@ -253,6 +257,9 @@
         <input id="url-manga" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
         <select id="force-manga" title="Forcar um scraper especifico">
           <option value="">Auto</option>
+          <option value="mangafire">MangaFire</option>
+          <option value="wpmanga">Manga WordPress</option>
+          <option value="tsundoku">Tsundoku (PT-BR)</option>
           <option value="mirror">Espelho de site</option>
           <option value="ebook">E-book</option>
           <option value="gallery">Galeria</option>
@@ -273,6 +280,9 @@
         <input id="url-video" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
         <select id="force-video" title="Forcar um scraper especifico">
           <option value="">Auto</option>
+          <option value="animestream">Anime (serie)</option>
+          <option value="enanime">Anime EN</option>
+          <option value="video">Video (yt-dlp)</option>
           <option value="mirror">Espelho de site</option>
           <option value="ebook">E-book</option>
           <option value="gallery">Galeria</option>
@@ -293,9 +303,10 @@
         <input id="url-files" type="url" placeholder="https://..." autocomplete="off" spellcheck="false">
         <select id="force-files" title="Tipo de download">
           <option value="">Auto</option>
-          <option value="mirror">Espelho de site</option>
-          <option value="ebook">E-book</option>
+          <option value="filehost">Arquivo/File host</option>
           <option value="gallery">Galeria</option>
+          <option value="ebook">E-book</option>
+          <option value="mirror">Espelho de site</option>
         </select>
         <button id="analyze-files">Analisar</button>
       </div>
@@ -336,7 +347,7 @@ const api = {
   },
 };
 
-const STATUS_LABEL = { pending: "Na fila", running: "Em andamento", done: "Concluida", error: "Erro" };
+const STATUS_LABEL = { pending: "Na fila", running: "Em andamento", done: "Concluida", error: "Erro", cancelled: "Cancelada" };
 const $ = (id) => document.getElementById(id);
 
 // ---- abas ------------------------------------------------------------------
@@ -378,11 +389,9 @@ function el(tag, opts = {}, children = []) {
   return node;
 }
 
-let current = null; // { url, force, info, kind, scraperId, statusEl }
-
-function setStatus(message) {
+function setStatus(cfg, message) {
   // mensagem vai para o status da aba que originou a analise atual
-  const target = (current && current.statusEl) || $("status-manga");
+  const target = (cfg && cfg.status) || $("status-manga");
   if (target) target.textContent = message;
 }
 
@@ -402,6 +411,7 @@ const ANALYZERS = ["enanime", "manga", "video", "files"].map((name) => ({
   button: $(`analyze-${name}`),
   status: $(`status-${name}`),
   result: $(`result-${name}`),
+  current: null, // { url, force, info, kind, scraperId }
 }));
 
 async function analyzeInto(cfg) {
@@ -414,12 +424,12 @@ async function analyzeInto(cfg) {
   try {
     const detected = await api.post("/api/detect", { url, force });
     const info = await api.post("/api/info", { url, force });
-    current = { url, force, info, kind: detected.kind, scraperId: detected.scraper_id, statusEl: cfg.status };
+    cfg.current = { url, force, info, kind: detected.kind, scraperId: detected.scraper_id };
     cfg.status.textContent = `Scraper detectado: ${detected.label} (${detected.kind})`;
-    renderResult(cfg.result, info, detected.kind);
+    renderResult(cfg.result, info, detected.kind, cfg);
     cfg.result.classList.remove("hidden");
   } catch (err) {
-    current = null;
+    cfg.current = null;
     cfg.status.textContent = "Erro: " + err.message;
   }
 }
@@ -429,7 +439,7 @@ for (const cfg of ANALYZERS) {
   cfg.url.addEventListener("keydown", (event) => { if (event.key === "Enter") analyzeInto(cfg); });
 }
 
-function renderResult(container, info, kind) {
+function renderResult(container, info, kind, cfg) {
   container.replaceChildren();
   const head = el("div", { class: "result-head" });
   if (info.cover) head.appendChild(el("img", { class: "cover", attrs: { src: info.cover, alt: "" } }));
@@ -439,12 +449,12 @@ function renderResult(container, info, kind) {
   if (info.duration) meta.appendChild(el("p", { class: "muted", text: "Duracao: " + formatDuration(info.duration) }));
   head.appendChild(meta);
   container.appendChild(head);
-  if (kind === "manga") container.appendChild(renderManga(info));
-  else if (kind === "video") container.appendChild(renderVideo(info));
-  else container.appendChild(renderGeneric(info, kind));
+  if (kind === "manga") container.appendChild(renderManga(info, cfg));
+  else if (kind === "video") container.appendChild(renderVideo(info, cfg));
+  else container.appendChild(renderGeneric(info, kind, cfg));
 }
 
-function renderGeneric(info, kind) {
+function renderGeneric(info, kind, cfg) {
   const labels = {
     image: "Baixar galeria",
     ebook: "Baixar e-book",
@@ -454,21 +464,28 @@ function renderGeneric(info, kind) {
   const wrap = el("div", { class: "controls" });
   const button = el("button", { text: labels[kind] || "Baixar" });
   button.addEventListener("click", () => {
-    startDownload((info.items || []).map((item) => item.id), {});
+    startDownload(cfg, (info.items || []).map((item) => item.id), {});
   });
   wrap.appendChild(button);
   return wrap;
 }
 
-function renderManga(info) {
+function renderManga(info, cfg) {
   return renderSelectableList(info, [
     { id: "cbz", label: "Empacotar em CBZ" },
-  ], "capitulo");
+  ], "capitulo", cfg);
 }
 
 // Lista com checkboxes + "Selecionar todos" (manga, episodios etc.)
-function renderSelectableList(info, options, unit) {
+function renderSelectableList(info, options, unit, cfg) {
   const wrap = el("div");
+  const filter = el("input", { attrs: { type: "text", placeholder: "Filtrar..." } });
+  filter.style.marginBottom = "8px";
+  const rangeWrap = el("div", { class: "row", style: "margin-bottom:8px" });
+  const from = el("input", { attrs: { type: "number", min: "1", placeholder: "De" } });
+  const to = el("input", { attrs: { type: "number", min: "1", placeholder: "Ate" } });
+  const rangeBtn = el("button", { class: "ghost", text: "Selecionar faixa" });
+  rangeWrap.append(el("span", { class: "muted", text: "Faixa:" }), from, to, rangeBtn);
   const controls = el("div", { class: "controls" });
   const selectAll = el("label", { class: "check" });
   const selectAllBox = el("input", { attrs: { type: "checkbox" } });
@@ -484,49 +501,72 @@ function renderSelectableList(info, options, unit) {
 
   const list = el("div", { class: "chapters" });
   const boxes = [];
+  const rows = [];
   for (const item of info.items || []) {
     const row = el("label", { class: "chapter" });
     const box = el("input", { attrs: { type: "checkbox", value: item.id } });
     row.append(box, el("span", { text: item.label }));
     list.appendChild(row);
     boxes.push(box);
+    rows.push({ box, label: item.label, row });
   }
   selectAllBox.addEventListener("change", () => boxes.forEach((box) => { box.checked = selectAllBox.checked; }));
+  filter.addEventListener("input", () => {
+    const q = filter.value.trim().toLowerCase();
+    for (const r of rows) {
+      r.row.style.display = !q || r.label.toLowerCase().includes(q) ? "" : "none";
+    }
+  });
+  rangeBtn.addEventListener("click", () => {
+    const a = parseInt(from.value, 10);
+    const b = parseInt(to.value, 10);
+    if (isNaN(a) || isNaN(b)) { setStatus(cfg, "Informe De e Ate."); return; }
+    const lo = Math.min(a, b), hi = Math.max(a, b);
+    for (const r of rows) {
+      const n = labelNum(r.label);
+      if (n !== null && n >= lo && n <= hi) r.box.checked = true;
+    }
+  });
   button.addEventListener("click", () => {
     const ids = boxes.filter((box) => box.checked).map((box) => box.value);
-    if (!ids.length) { setStatus(`Selecione ao menos um ${unit}.`); return; }
+    if (!ids.length) { setStatus(cfg, `Selecione ao menos um ${unit}.`); return; }
+    if (!confirm(`Baixar ${ids.length} ${unit}(s)?`)) return;
     const opts = {};
     for (const { id, box } of optionBoxes) opts[id] = box.checked;
-    startDownload(ids, opts);
+    startDownload(cfg, ids, opts);
   });
-  wrap.append(controls, list);
+  wrap.append(filter, rangeWrap, controls, list);
   return wrap;
 }
 
-function renderVideo(info) {
+function labelNum(label) {
+  const m = String(label).match(/\d+/);
+  return m ? parseInt(m[0], 10) : null;
+}
+
+function renderVideo(info, cfg) {
   const items = info.items || [];
-  // serie de episodios (animestream): lista selecionavel
-  if (items.length > 1 && !info.is_playlist) {
-    return renderSelectableList(info, [], "episodio");
+  if (items.length > 1) {
+    return renderSelectableList(info, [], info.is_playlist ? "item" : "episodio", cfg);
   }
   const wrap = el("div", { class: "controls" });
-  const label = info.is_playlist ? `Baixar playlist (${items.length} itens)` : "Baixar video";
-  const button = el("button", { text: label });
+  const button = el("button", { text: "Baixar video" });
   button.addEventListener("click", () => {
-    startDownload(items.map((item) => item.id), {});
+    if (!confirm("Baixar este video?")) return;
+    startDownload(cfg, items.map((item) => item.id), {});
   });
   wrap.appendChild(button);
   return wrap;
 }
 
-async function startDownload(items, options) {
-  if (!current) return;
+async function startDownload(cfg, items, options) {
+  if (!cfg.current) return;
   try {
-    const res = await api.post("/api/download", { url: current.url, items, options, force: current.force });
-    setStatus("Tarefa criada: " + res.task_id.slice(0, 8) + " (veja a aba Tarefas)");
+    const res = await api.post("/api/download", { url: cfg.current.url, items, options, force: cfg.current.force });
+    setStatus(cfg, "Tarefa criada: " + res.task_id.slice(0, 8) + " (veja a aba Tarefas)");
     await pollTasks();
   } catch (err) {
-    setStatus("Erro: " + err.message);
+    setStatus(cfg, "Erro: " + err.message);
   }
 }
 
@@ -549,6 +589,16 @@ function renderTask(task) {
     el("span", { class: `badge ${task.status}`, text: STATUS_LABEL[task.status] || task.status }),
     el("span", { class: "muted", text: task.id.slice(0, 8) })
   );
+  if (task.status === "running" || task.status === "pending") {
+    const cancelBtn = el("button", { class: "ghost", text: "Cancelar" });
+    cancelBtn.addEventListener("click", async () => {
+      try {
+        await api.post(`/api/tasks/${task.id}/cancel`, {});
+        await pollTasks();
+      } catch (err) { /* ignora */ }
+    });
+    top.appendChild(cancelBtn);
+  }
   const bar = el("div", { class: "bar" });
   const fill = el("div", { class: `fill ${task.status}` });
   fill.style.width = Math.max(0, Math.min(100, task.progress || 0)) + "%";
