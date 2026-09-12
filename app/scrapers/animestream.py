@@ -1,4 +1,4 @@
-﻿"""Scraper de series de anime em 4 hosts (animeq, otakubr, animesdigital, animexnovel)."""
+﻿"""Scraper de series de anime em 5 hosts (animeq, otakubr, animesdigital, animexnovel, animefire)."""
 from __future__ import annotations
 
 import re
@@ -13,12 +13,13 @@ from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .deps import ensure_ffmpeg
 from .animestream_net import USER_AGENT, ensure_folder, fetch, host, run_downloads, sanitize, ytdlp
 
-HOSTS = ("animeq.cloud", "otakubr.com", "animesdigital.org", "animexnovel.com")
+HOSTS = ("animeq.cloud", "otakubr.com", "animesdigital.org", "animexnovel.com", "animefire.app", "animefire.com")
 MAX_PAGES = 30
 MP4_RE = re.compile(r"https?://[^\"'\s]+\.mp4")
 EPISODE_NUM_RE = re.compile(r"episodio-(\d+)$")
 OTAKUBR_EP_RE = re.compile(r"^https?://[^/]+/anime/([^/]+)/(\d+)/(\d+)/?$")
 ANIMEXNOVEL_EP_RE = re.compile(r"/anime/[^/]+/episodio-(\d+)/?$")
+ANIMEFIRE_EP_RE = re.compile(r"/video/[^/]*-episodio-(\d+)-t(\d+)/?$", re.IGNORECASE)
 DRIVE_ID_RE = re.compile(r"[-\w]{25,}")
 
 
@@ -29,7 +30,7 @@ def drive_url(src: str) -> str | None:
 
 
 class AnimeStreamScraper(Scraper):
-    """Baixa series de anime de animeq.cloud, otakubr.com e animesdigital.org."""
+    """Baixa series de anime de animeq.cloud, otakubr.com, animesdigital.org, animexnovel.com e animefire.app."""
 
     id = "animestream"
     label = "Anime (serie)"
@@ -46,6 +47,8 @@ class AnimeStreamScraper(Scraper):
             return self._info_otakubr(url)
         if host_name == "animexnovel.com":
             return self._info_animexnovel(url)
+        if host_name in ("animefire.app", "animefire.com"):
+            return self._info_animefire(url)
         return self._info_animesdigital(url)
 
     def download(
@@ -74,6 +77,14 @@ class AnimeStreamScraper(Scraper):
                 progress_cb,
                 self._info_animexnovel,
                 self._episode_animexnovel,
+            )
+        elif host_name in ("animefire.app", "animefire.com"):
+            self._download_series(
+                url,
+                item_ids,
+                progress_cb,
+                self._info_animefire,
+                self._episode_animefire,
             )
         else:
             ffmpeg = ensure_ffmpeg()
@@ -127,6 +138,8 @@ class AnimeStreamScraper(Scraper):
             self._episode_animesdigital(episode_url, title, label, progress_cb, ensure_ffmpeg())
         elif host_name == "animexnovel.com":
             self._episode_animexnovel(episode_url, title, label, progress_cb)
+        elif host_name in ("animefire.app", "animefire.com"):
+            self._episode_animefire(episode_url, title, label, progress_cb)
         else:
             # animeq e qualquer outro site generico: extracao HTML direta
             self._episode_animeq(episode_url, title, label, progress_cb)
@@ -189,6 +202,12 @@ class AnimeStreamScraper(Scraper):
             soup = BeautifulSoup(fetch(episode_url), "lxml")
             iframe = soup.select_one('iframe[src*="drive.google.com"]')
             return drive_url(iframe.get("src") or "") if iframe else None
+        if host(episode_url) in ("animefire.app", "animefire.com"):
+            soup = BeautifulSoup(fetch(episode_url), "lxml")
+            iframe = soup.select_one('iframe[src*="blogger.com"]')
+            if not iframe:
+                return None
+            return iframe.get("src") or None
         html = fetch(episode_url, referer=episode_url)
         soup = BeautifulSoup(html, "lxml")
         mp4, m3u8, _ = self._animeq_sources(soup, html, episode_url)
@@ -512,3 +531,45 @@ class AnimeStreamScraper(Scraper):
             raise ScraperError(
                 "gdown nao conseguiu baixar este episodio (link privado ou cota excedida?)."
             )
+
+    # -- animefire.app --------------------------------------------------
+
+    def _info_animefire(self, url: str) -> dict:
+        """Enumera episodios do animefire agrupados por temporada (S1E01)."""
+        soup = BeautifulSoup(fetch(url), "lxml")
+        meta = soup.select_one('meta[property="og:title"]')
+        meta_title = str(meta.get("content") or "").strip() if meta else ""
+        items: list[dict] = []
+        seen: set[str] = set()
+        for node in soup.select("#episodesList a[href*='/video/']"):
+            href = str(node.get("href") or "")
+            match = ANIMEFIRE_EP_RE.search(href)
+            if not match or href in seen:
+                continue
+            seen.add(href)
+            episodio, temp = int(match.group(1)), int(match.group(2))
+            items.append({"id": href, "label": f"S{temp}E{episodio:02d}"})
+        if not items:
+            raise ScraperError("Nenhum episodio encontrado nesta pagina.")
+        # ordena por temporada, depois episodio (a listagem ja vem em ordem, mas garante)
+        items.sort(key=lambda item: (int(re.search(r"S(\d+)E", str(item["label"])).group(1)), int(re.search(r"E(\d+)$", str(item["label"])).group(1))))
+        title = meta_title or urlparse(url).path.strip("/").split("/")[-1].replace("-", " ").title()
+        return {"title": title, "cover": None, "items": items}
+
+    def _episode_animefire(self, url: str, title: str, label: str, progress_cb: ProgressCb) -> None:
+        soup = BeautifulSoup(fetch(url), "lxml")
+        iframe = soup.select_one('iframe[src*="blogger.com"]')
+        if not iframe:
+            raise ScraperError("Nenhuma fonte de video encontrada")
+        try:
+            ytdlp(
+                iframe.get("src") or "",
+                str(ensure_folder(title) / f"{label}.%(ext)s"),
+                progress_cb,
+                ensure_ffmpeg(),
+            )
+        except ScraperError as exc:
+            raise ScraperError(
+                "O player Blogger deste site ainda nao e suportado para download "
+                f"(player protegido). Detalhe: {str(exc)[-120:]}"
+            ) from exc

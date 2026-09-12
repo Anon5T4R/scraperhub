@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from urllib.parse import urlparse
@@ -13,6 +14,9 @@ from .scrapers.base import ProgressCb, ScraperError
 from .search import probe_quality, search_all
 
 MAX_FONTES = 4
+MAX_FONTES_COMPLETO = 8
+SEASON_EP_RE = re.compile(r"S(\d+)\s*E(?:p)?\s*(\d+)", re.IGNORECASE)
+SEASON_KEY_RE = re.compile(r"^S(\d+) Ep (\d+)$")
 
 
 def _label_num(label: str) -> int | None:
@@ -35,6 +39,28 @@ def _label_key(label: str) -> tuple[int, int, str]:
     if numero is None:
         return (1, 0, label)
     return (0, numero, label)
+
+
+def _canonical_full(label: str) -> str:
+    """Chave canonica com temporada: 'S2E05' -> 'S2 Ep 05'; 'Ep 05' -> 'Ep 05'."""
+    match = SEASON_EP_RE.search(label)
+    if match:
+        return f"S{int(match.group(1))} Ep {int(match.group(2)):02d}"
+    numero = _label_num(label)
+    if numero is not None:
+        return f"Ep {numero:02d}"
+    return label.strip().lower()
+
+
+def _label_key_full(label: str) -> tuple[int, int, int, str]:
+    """Ordena por temporada, depois episodio; rotulos nao numericos por ultimo."""
+    match = SEASON_KEY_RE.match(label)
+    if match:
+        return (0, int(match.group(1)), int(match.group(2)), label)
+    numero = _label_num(label)
+    if numero is None:
+        return (1, 0, 0, label)
+    return (0, 0, numero, label)
 
 
 def _quality_score(qualidade: str | None) -> int:
@@ -72,7 +98,34 @@ def _render_and_enumerate(url: str, scraper: AnimeStreamScraper) -> dict:
     return scraper.generic_info(url, html=html)
 
 
-def _probe(result: dict, scraper: AnimeStreamScraper) -> dict:
+def _dedupe_fontes(fontes: list[dict], max_total: int, por_site_max: int) -> list[dict]:
+    """Dedupe por URL e diversidade: max por_site_max por site (round-robin)."""
+    unicos: list[dict] = []
+    vistos: set[str] = set()
+    por_site: dict[str, int] = {}
+    while len(unicos) < max_total:
+        adicionou = False
+        for r in fontes:
+            url = str(r.get("url") or "")
+            site = str(r.get("site") or "")
+            chave = f"{site}|{url}"
+            if chave in vistos or por_site.get(site, 0) >= por_site_max:
+                continue
+            if url in vistos:
+                continue
+            vistos.add(chave)
+            vistos.add(url)
+            por_site[site] = por_site.get(site, 0) + 1
+            unicos.append(r)
+            adicionou = True
+            if len(unicos) >= max_total:
+                break
+        if not adicionou:
+            break
+    return unicos[:max_total]
+
+
+def _probe(result: dict, scraper: AnimeStreamScraper, canonical: Callable[[str], str] = _canonical) -> dict:
     """Coleta eps e qualidade de uma fonte; erro individual nao aborta o plano."""
     url = str(result.get("url") or "")
     site = str(result.get("site") or urlparse(url).hostname or "")
@@ -102,7 +155,7 @@ def _probe(result: dict, scraper: AnimeStreamScraper) -> dict:
     # normaliza os rotulos por chave canonica: 'Ep 3' e 'S1E03' sao o mesmo ep
     eps: dict[str, str] = {}
     for item in items:
-        chave = _canonical(str(item["label"]))
+        chave = canonical(str(item["label"]))
         eps.setdefault(chave, str(item["id"]))
     fonte["eps"] = eps
     fonte["title"] = str(info.get("title") or "")
@@ -117,56 +170,8 @@ def _probe(result: dict, scraper: AnimeStreamScraper) -> dict:
     return fonte
 
 
-def plan_season(
-    term: str, idioma: str = "qualquer", scraper: AnimeStreamScraper | None = None
-) -> dict:
-    """Monta a temporada: fontes rankeadas e a melhor fonte por episodio."""
-    scraper = scraper or AnimeStreamScraper()
-    resultados, _ = search_all(term)
-    fontes = [r for r in resultados if scraper.match(str(r.get("url") or ""))]
-    # filtro de relevancia: alguns sites retornam qualquer coisa na busca
-    fontes = [r for r in fontes if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)]
-    if idioma and idioma.lower() != "qualquer":
-        alvo = idioma.lower()
-        fontes = [r for r in fontes if alvo in str(r.get("idioma") or "").lower()]
-    # descoberta web quando as fontes conhecidas nao bastam (minimo 2)
-    descobertas: list[dict] = []
-    if len({str(r.get("site")) for r in fontes}) < 2:
-        conhecidos = [str(r.get("url")) for r in resultados] + [
-            str(r.get("url")) for r in fontes
-        ]
-        for achado in discover_sites(term, conhecidos):
-            descobertas.append({**achado, "idioma": "web (descoberta)", "descoberta": True})
-        fontes.extend(descobertas[: 2])
-    # dedupe por URL e diversidade: max 2 por site (round-robin), para um
-    # site com muitas variantes nao ocupar todas as vagas antes dos demais
-    unicos: list[dict] = []
-    vistos: set[str] = set()
-    por_site: dict[str, int] = {}
-    rodada = 0
-    while len(unicos) < MAX_FONTES:
-        adicionou = False
-        for r in fontes:
-            url = str(r.get("url") or "")
-            site = str(r.get("site") or "")
-            chave = f"{site}|{url}"
-            if chave in vistos or por_site.get(site, 0) >= 2:
-                continue
-            if url in vistos:
-                continue
-            vistos.add(chave)
-            vistos.add(url)
-            por_site[site] = por_site.get(site, 0) + 1
-            unicos.append(r)
-            adicionou = True
-            if len(unicos) >= MAX_FONTES:
-                break
-        if not adicionou:
-            break
-        rodada += 1
-    fontes = unicos[:MAX_FONTES]
-    with ThreadPoolExecutor(max_workers=MAX_FONTES) as pool:
-        coletadas = list(pool.map(partial(_probe, scraper=scraper), fontes))
+def _rank_and_build(coletadas: list[dict], key_fn: Callable[[str], tuple]) -> dict:
+    """Rankeia as fontes e monta a melhor fonte por episodio."""
     ordem = sorted(
         range(len(coletadas)),
         key=lambda i: (-_quality_score(coletadas[i]["qualidade"]), -len(coletadas[i]["eps"]), i),
@@ -174,7 +179,7 @@ def plan_season(
     rankeadas = [coletadas[i] for i in ordem]
     labels = {label for fonte in coletadas for label in fonte["eps"]}
     episodios: list[dict] = []
-    for label in sorted(labels, key=_label_key):
+    for label in sorted(labels, key=key_fn):
         donas = [f for f in rankeadas if label in f["eps"]]
         candidatos = [
             {"site": f["site"], "url": f["eps"][label], "qualidade": f["qualidade"]}
@@ -205,6 +210,65 @@ def plan_season(
     }
 
 
+def plan_season(
+    term: str, idioma: str = "qualquer", scraper: AnimeStreamScraper | None = None
+) -> dict:
+    """Monta a temporada: fontes rankeadas e a melhor fonte por episodio."""
+    scraper = scraper or AnimeStreamScraper()
+    resultados, _ = search_all(term)
+    fontes = [r for r in resultados if scraper.match(str(r.get("url") or ""))]
+    # filtro de relevancia: alguns sites retornam qualquer coisa na busca
+    fontes = [r for r in fontes if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)]
+    if idioma and idioma.lower() != "qualquer":
+        alvo = idioma.lower()
+        fontes = [r for r in fontes if alvo in str(r.get("idioma") or "").lower()]
+    # descoberta web quando as fontes conhecidas nao bastam (minimo 2)
+    descobertas: list[dict] = []
+    if len({str(r.get("site")) for r in fontes}) < 2:
+        conhecidos = [str(r.get("url")) for r in resultados] + [
+            str(r.get("url")) for r in fontes
+        ]
+        for achado in discover_sites(term, conhecidos):
+            descobertas.append({**achado, "idioma": "web (descoberta)", "descoberta": True})
+        fontes.extend(descobertas[: 2])
+    # dedupe por URL e diversidade: max 2 por site (round-robin), para um
+    # site com muitas variantes nao ocupar todas as vagas antes dos demais
+    fontes = _dedupe_fontes(fontes, MAX_FONTES, 2)
+    with ThreadPoolExecutor(max_workers=MAX_FONTES) as pool:
+        coletadas = list(pool.map(partial(_probe, scraper=scraper), fontes))
+    return _rank_and_build(coletadas, key_fn=_label_key)
+
+
+def plan_full(
+    term: str, idioma: str = "qualquer", scraper: AnimeStreamScraper | None = None
+) -> dict:
+    """Monta o anime COMPLETO: todas as temporadas, multi-fonte."""
+    scraper = scraper or AnimeStreamScraper()
+    resultados, _ = search_all(term)
+    fontes = [r for r in resultados if scraper.match(str(r.get("url") or ""))]
+    # filtro de relevancia: alguns sites retornam qualquer coisa na busca
+    fontes = [r for r in fontes if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)]
+    if idioma and idioma.lower() != "qualquer":
+        alvo = idioma.lower()
+        fontes = [r for r in fontes if alvo in str(r.get("idioma") or "").lower()]
+    # descoberta web quando as fontes conhecidas nao bastam (minimo 2)
+    descobertas: list[dict] = []
+    if len({str(r.get("site")) for r in fontes}) < 2:
+        conhecidos = [str(r.get("url")) for r in resultados] + [
+            str(r.get("url")) for r in fontes
+        ]
+        for achado in discover_sites(term, conhecidos):
+            descobertas.append({**achado, "idioma": "web (descoberta)", "descoberta": True})
+        fontes.extend(descobertas[: 2])
+    # sem limite por site: paginas de temporadas distintas do mesmo site entram todas
+    fontes = _dedupe_fontes(fontes, MAX_FONTES_COMPLETO, 99)
+    with ThreadPoolExecutor(max_workers=MAX_FONTES) as pool:
+        coletadas = list(
+            pool.map(partial(_probe, scraper=scraper, canonical=_canonical_full), fontes)
+        )
+    return _rank_and_build(coletadas, key_fn=_label_key_full)
+
+
 def download_season(
     term: str,
     idioma: str,
@@ -212,10 +276,11 @@ def download_season(
     progress_cb: ProgressCb,
     options: dict | None = None,
     scraper: AnimeStreamScraper | None = None,
+    full: bool = False,
 ) -> None:
     """Baixa a temporada montada, com fallback por episodio e relatorio de procedencia."""
     scraper = scraper or AnimeStreamScraper()
-    plan = plan_season(term, idioma, scraper)
+    plan = plan_full(term, idioma, scraper) if full else plan_season(term, idioma, scraper)
     episodios = plan["episodios"]
     if wanted:
         pedidos = set(wanted)
@@ -279,7 +344,7 @@ def download_season(
     ]
     if pendentes:
         progress_cb(0, f"{len(pendentes)} episodio(s) sem fonte — buscando na web...")
-        extras = _descobrir_extras(term, plan, scraper)
+        extras = _descobrir_extras(term, plan, scraper, full)
         if extras:
             for fonte in extras:
                 progress_cb(0, f"nova fonte da web: {fonte['site']} ({len(fonte['eps'])} eps)")
@@ -315,7 +380,9 @@ def download_season(
         raise ScraperError("Resumo da temporada: " + "; ".join(linhas))
 
 
-def _descobrir_extras(term: str, plan: dict, scraper: AnimeStreamScraper) -> list[dict]:
+def _descobrir_extras(
+    term: str, plan: dict, scraper: AnimeStreamScraper, full: bool = False
+) -> list[dict]:
     """Busca na web fontes extras para os episodios que falharam.
 
     Sem filtro de idioma: fontes descobertas nao declaram idioma e sao
@@ -326,7 +393,8 @@ def _descobrir_extras(term: str, plan: dict, scraper: AnimeStreamScraper) -> lis
     extras: list[dict] = []
     with ThreadPoolExecutor(max_workers=MAX_FONTES) as pool:
         for fonte in pool.map(
-            partial(_probe, scraper=scraper), [{**a, "descoberta": True} for a in achados]
+            partial(_probe, scraper=scraper, canonical=_canonical_full if full else _canonical),
+            [{**a, "descoberta": True} for a in achados],
         ):
             if fonte.get("erro") or not fonte["eps"]:
                 continue

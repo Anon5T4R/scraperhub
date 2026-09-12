@@ -27,7 +27,6 @@ TITLE_LIST_SELECTOR = ".title-detail__list"
 CHAPTER_IMG_SELECTOR = "img.reader-img"
 INFO_TIMEOUT_MS = 30000
 NAV_TIMEOUT_MS = 45000
-LIST_MAX_ITER = 50
 LIST_WAIT_MS = 1200
 IMG_MAX_ITER = 60
 IMG_WAIT_MS = 700
@@ -128,23 +127,52 @@ class MangaFireScraper(Scraper):
             page.goto(title_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
             page.wait_for_selector("h1", timeout=INFO_TIMEOUT_MS)
             page.wait_for_selector(TITLE_ROW_SELECTOR, timeout=INFO_TIMEOUT_MS)
-            browser.scroll_until_stable(
-                page,
-                TITLE_ROW_SELECTOR,
-                LIST_MAX_ITER,
-                LIST_WAIT_MS,
-                container=TITLE_LIST_SELECTOR,
-            )
             title = (page.inner_text("h1") or "").strip()
             cover_el = page.query_selector('meta[property="og:image"]') or page.query_selector("img.poster, .poster img")
             cover = cover_el.get_attribute("content") if cover_el and cover_el.get_attribute("content") else None
-            rows = page.eval_on_selector_all(TITLE_ROW_SELECTOR, ROWS_JS)
+            rows = self._all_chapter_rows(page)
         except Exception as exc:
             raise ScraperError(f"Falha ao ler a pagina do manga: {exc}") from exc
         items = self._items(rows)
         if not items:
             raise ScraperError("Nenhum capitulo encontrado nesta pagina.")
         return {"title": title or "Manga sem titulo", "cover": cover, "items": items}
+
+    def _all_chapter_rows(self, page: Page) -> list[dict]:
+        """Coleta os capitulos de TODAS as paginas do npager (20 por pagina).
+
+        A lista usa botoes de paginacao (npager__num), entao o scroll nao
+        carrega mais nada: e preciso clicar na proxima pagina. Com ellipsis
+        ('1 2 3 4 5 ... N'), clica o maior numero disponivel maior que o
+        ativo — o npager re-renderiza e o loop continua.
+        """
+        all_rows: list[dict] = []
+        seen: set[str] = set()
+        while True:
+            page.wait_for_timeout(LIST_WAIT_MS)
+            for row in page.eval_on_selector_all(TITLE_ROW_SELECTOR, ROWS_JS):
+                chapter_id = parse_chapter_id(str(row.get("href") or ""))
+                if chapter_id and chapter_id not in seen:
+                    seen.add(chapter_id)
+                    all_rows.append(row)
+            clicked = page.evaluate(
+                """() => {
+                    const btns = Array.from(document.querySelectorAll('.npager__num'));
+                    const active = btns.find(b => b.classList.contains('is-active'));
+                    const current = active ? parseInt(active.innerText, 10) : 0;
+                    let target = null;
+                    let targetNum = current;
+                    for (const b of btns) {
+                        const n = parseInt(b.innerText.trim(), 10);
+                        if (!isNaN(n) && n > targetNum) { target = b; targetNum = n; }
+                    }
+                    if (target) { target.click(); return true; }
+                    return false;
+                }"""
+            )
+            if not clicked:
+                break
+        return all_rows
 
     @staticmethod
     def _items(rows: list[dict]) -> list[dict]:

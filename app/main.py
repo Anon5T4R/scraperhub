@@ -11,7 +11,12 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .assembly import download_season, plan_season
+from .assembly import download_season, plan_full, plan_season
+from .manga_search import (
+    load_sites as load_manga_sites,
+    save_sites as save_manga_sites,
+    search_manga,
+)
 from .scrapers import Scraper, ScraperError, TaskCancelled, detect, get_scraper, normalize_url
 from .search import load_sites, save_sites, search_all, verify_quality
 from .tasks import TaskManager
@@ -26,7 +31,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.6.0")
+app = FastAPI(title="ScraperHub", version="1.7.0")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
@@ -104,6 +109,12 @@ class AssembleDownloadRequest(BaseModel):
     idioma: str = "qualquer"
     wanted: list[str] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+
+
+class MangaSearchRequest(BaseModel):
+    """Corpo com o termo de busca de mangas."""
+
+    term: str = Field(min_length=1)
 
 
 def _resolve(url: str, force: str | None = None) -> tuple[Scraper, str]:
@@ -237,6 +248,58 @@ def api_assemble_download(payload: AssembleDownloadRequest) -> dict:
             manager.update_progress(task_id, progress=progress, current_item=message, log=message)
 
         download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options)
+
+    return {"task_id": manager.create(run)}
+
+
+@app.post("/api/manga_search")
+def api_manga_search(payload: MangaSearchRequest) -> dict:
+    """Busca mangas por nome (MangaFire + sites WordPress)."""
+    term = payload.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+    resultados, erros = search_manga(term)
+    return {"resultados": resultados, "erros": erros}
+
+
+@app.get("/api/manga_sites")
+def api_manga_sites_get() -> dict:
+    """Lista os sites de manga configurados."""
+    return {"sites": load_manga_sites()}
+
+
+@app.post("/api/manga_sites")
+def api_manga_sites_post(payload: SitesRequest) -> dict:
+    """Salva a lista de sites de manga."""
+    return {"sites": save_manga_sites(payload.sites)}
+
+
+@app.post("/api/assemble_full_info")
+def api_assemble_full_info(payload: AssembleInfoRequest) -> dict:
+    """Monta o anime COMPLETO: todas as temporadas, multi-fonte."""
+    term = payload.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+    try:
+        return plan_full(term, payload.idioma or "qualquer")
+    except ScraperError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/assemble_full_download")
+def api_assemble_full_download(payload: AssembleDownloadRequest) -> dict:
+    """Cria a tarefa de download do anime completo montado."""
+    term = payload.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+
+    def run(task_id: str) -> None:
+        def progress_cb(progress: int, message: str) -> None:
+            if manager.is_cancelled(task_id):
+                raise TaskCancelled()
+            manager.update_progress(task_id, progress=progress, current_item=message, log=message)
+
+        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options, full=True)
 
     return {"task_id": manager.create(run)}
 

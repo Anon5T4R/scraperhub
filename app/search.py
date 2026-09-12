@@ -22,7 +22,7 @@ _QUALITY_CACHE: dict[str, str] = {}
 
 def default_sites() -> list[str]:
     """Sites de busca usados quando sites.txt ainda nao existe."""
-    return ["https://animeq.cloud/", "https://animesdigital.org/"]
+    return ["https://animeq.cloud/", "https://animesdigital.org/", "https://animefire.app/"]
 
 
 def load_sites() -> list[str]:

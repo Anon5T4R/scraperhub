@@ -61,11 +61,13 @@ baixar o navegador usado pelo scraper de manga.
   HTML nao e reescrito: os links permanecem absolutos.
 - **Anime (serie)** (`animestream`): series/temporadas em animeq.cloud (MP4
   direto), animesdigital.org (HLS via ffmpeg), otakubr.com (apenas listagem;
-  o player Blogger do site e protegido e o download falha com aviso claro) e
+  o player Blogger do site e protegido e o download falha com aviso claro),
   animexnovel.com (episodios hospedados no Google Drive, baixados via gdown;
-  alguns episodios podem estar restritos pelo dono do arquivo). Cole o link
+  alguns episodios podem estar restritos pelo dono do arquivo) e animefire.app
+  (listagem completa por temporada `S1E01`; o player Blogger do site e
+  protegido e o download falha com aviso claro, igual ao otakubr). Cole o link
   da pagina do anime: a UI lista todos os episodios com selecao multipla
-  (por temporada no otakubr, `S1E01`).
+  (por temporada no otakubr e animefire, `S1E01`).
 - **Anime EN** (`enanime`): series em agregadores em ingles — animeheaven.me
   (MP4 direto do proprio CDN), gogoanime.is e 9anime.org.lv (episodios via
   servidor vidmoly, resolvido pelo yt-dlp como HLS). Cole o link da pagina

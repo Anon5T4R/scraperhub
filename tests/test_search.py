@@ -48,5 +48,9 @@ def test_load_sites_le_arquivo(tmp_path, monkeypatch):
 def test_load_sites_cria_com_defaults(tmp_path, monkeypatch):
     arquivo = tmp_path / "sites.txt"
     monkeypatch.setattr("app.search.SITES_FILE", arquivo)
-    assert load_sites() == ["https://animeq.cloud/", "https://animesdigital.org/"]
+    assert load_sites() == [
+        "https://animeq.cloud/",
+        "https://animesdigital.org/",
+        "https://animefire.app/",
+    ]
     assert arquivo.exists()

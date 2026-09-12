@@ -208,7 +208,10 @@
       <p id="search-status" class="muted" style="margin:10px 0 0"></p>
       <div id="search-results" class="search-results hidden"></div>
       <div id="assemble" class="hidden" style="margin-top:12px">
-        <button id="assemble-btn" class="ghost">Montar temporada (multi-fonte)</button>
+        <div class="row" style="margin-top:12px">
+          <button id="assemble-btn" class="ghost">Montar temporada (multi-fonte)</button>
+          <button id="assemble-full-btn" class="ghost">Montar anime completo (todas as temporadas)</button>
+        </div>
         <p id="assemble-status" class="muted" style="margin:10px 0 0"></p>
         <div id="assemble-result"></div>
       </div>
@@ -250,6 +253,25 @@
 
   <!-- Manga -->
   <section class="panel" role="tabpanel" id="panel-manga" aria-labelledby="tab-manga" hidden>
+    <section class="card">
+      <label for="manga-search">Buscar mang&aacute; por nome</label>
+      <div class="row" style="margin-top:8px">
+        <input id="manga-search" type="text" placeholder="Buscar mang&aacute; por nome..." autocomplete="off" spellcheck="false">
+        <button id="manga-search-btn">Buscar</button>
+      </div>
+      <p id="manga-search-status" class="muted" style="margin:10px 0 0"></p>
+      <div id="manga-search-results" class="search-results hidden"></div>
+      <details id="manga-sites-panel" style="margin-top:12px">
+        <summary class="muted" style="cursor:pointer">Sites de mang&aacute;</summary>
+        <div style="margin-top:10px">
+          <textarea id="manga-sites" spellcheck="false" placeholder="https://exemplo.com/"></textarea>
+          <div class="row between" style="margin-top:8px">
+            <span id="manga-sites-status" class="muted"></span>
+            <button id="manga-sites-save" class="ghost">Salvar sites</button>
+          </div>
+        </div>
+      </details>
+    </section>
     <section class="card">
       <label for="url-manga">Cole o link do mang&aacute;</label>
       <p class="panel-hint">MangaFire e clones, Tsundoku (PT-BR) e sites WordPress/Madara. O scraper certo &eacute; detectado automaticamente.</p>
@@ -684,14 +706,29 @@ async function assembleInfo() {
   $("assemble-result").replaceChildren();
   try {
     const plan = await api.post("/api/assemble_info", { term, idioma });
-    renderAssembly(plan, term, idioma);
+    renderAssembly(plan, term, idioma, false);
     setAssembleStatus(`${(plan.fontes || []).length} fonte(s), ${(plan.episodios || []).length} episodio(s).`);
   } catch (err) {
     setAssembleStatus("Erro: " + err.message);
   }
 }
 
-function renderAssembly(plan, term, idioma) {
+async function assembleFullInfo() {
+  const term = $("search").value.trim();
+  const idioma = $("search-lang").value || "qualquer";
+  if (!term) { setAssembleStatus("Digite um nome para buscar."); return; }
+  setAssembleStatus("Analisando fontes... pode levar cerca de 1 minuto.");
+  $("assemble-result").replaceChildren();
+  try {
+    const plan = await api.post("/api/assemble_full_info", { term, idioma });
+    renderAssembly(plan, term, idioma, true);
+    setAssembleStatus(`${(plan.fontes || []).length} fonte(s), ${(plan.episodios || []).length} episodio(s).`);
+  } catch (err) {
+    setAssembleStatus("Erro: " + err.message);
+  }
+}
+
+function renderAssembly(plan, term, idioma, full = false) {
   const container = $("assemble-result");
   container.replaceChildren();
   const episodios = plan.episodios || [];
@@ -722,8 +759,8 @@ function renderAssembly(plan, term, idioma) {
   }
   container.appendChild(table);
   container.appendChild(renderAssemblySources(plan.fontes || []));
-  const baixar = el("button", { text: "Baixar temporada montada" });
-  baixar.addEventListener("click", () => startAssemblyDownload(plan, term, idioma));
+  const baixar = el("button", { text: full ? "Baixar anime completo" : "Baixar temporada montada" });
+  baixar.addEventListener("click", () => startAssemblyDownload(plan, term, idioma, full));
   container.appendChild(baixar);
 }
 
@@ -738,11 +775,11 @@ function renderAssemblySources(fontes) {
   return wrap;
 }
 
-async function startAssemblyDownload(plan, term, idioma) {
+async function startAssemblyDownload(plan, term, idioma, full = false) {
   const labels = (plan.episodios || []).map((ep) => ep.label);
   if (!labels.length) { setAssembleStatus("Nada para baixar."); return; }
   try {
-    const res = await api.post("/api/assemble_download", { term, idioma, wanted: labels, options: {} });
+    const res = await api.post(full ? "/api/assemble_full_download" : "/api/assemble_download", { term, idioma, wanted: labels, options: {} });
     setAssembleStatus("Tarefa criada: " + res.task_id.slice(0, 8) + " (veja a aba Tarefas)");
     await pollTasks();
   } catch (err) {
@@ -799,12 +836,95 @@ async function saveSites() {
   }
 }
 
+// ---- busca de manga -----------------------------------------------------------
+
+function setMangaSearchStatus(message) {
+  $("manga-search-status").textContent = message;
+}
+
+function setMangaSitesStatus(message) {
+  $("manga-sites-status").textContent = message;
+}
+
+async function searchManga() {
+  const term = $("manga-search").value.trim();
+  const results = $("manga-search-results");
+  if (!term) { setMangaSearchStatus("Digite um nome para buscar."); return; }
+  setMangaSearchStatus("Buscando...");
+  results.classList.add("hidden");
+  results.replaceChildren();
+  try {
+    const data = await api.post("/api/manga_search", { term });
+    renderMangaSearchResults(data);
+    const hosts = Object.keys(data.erros || {});
+    const sufixo = hosts.length ? ` (falha: ${hosts.join(", ")})` : "";
+    setMangaSearchStatus(`${(data.resultados || []).length} resultado(s) encontrado(s)${sufixo}.`);
+  } catch (err) {
+    setMangaSearchStatus("Erro: " + err.message);
+  }
+}
+
+function renderMangaSearchResults(data) {
+  const container = $("manga-search-results");
+  container.replaceChildren();
+  const items = data.resultados || [];
+  if (!items.length) {
+    container.appendChild(el("p", { class: "muted", text: "Nenhum resultado encontrado." }));
+    container.classList.remove("hidden");
+    return;
+  }
+  for (const item of items) container.appendChild(renderMangaSearchItem(item));
+  container.classList.remove("hidden");
+}
+
+function renderMangaSearchItem(item) {
+  const row = el("div", { class: "search-item" });
+  const info = el("div");
+  info.appendChild(el("div", { class: "search-title", text: item.title || "Sem titulo" }));
+  info.appendChild(el("div", { class: "muted", text: `${item.site} · ${item.idioma}` }));
+  const actions = el("div", { class: "search-actions" });
+  const use = el("button", { class: "ghost", text: "Usar" });
+  use.addEventListener("click", () => {
+    // a busca ja esta na aba Manga: preenche a URL e analisa direto
+    $("url-manga").value = item.url;
+    analyzeInto(ANALYZERS.find((cfg) => cfg.url.id === "url-manga"));
+  });
+  actions.appendChild(use);
+  row.append(info, actions);
+  return row;
+}
+
+async function loadMangaSites() {
+  try {
+    const data = await api.get("/api/manga_sites");
+    $("manga-sites").value = (data.sites || []).join("\n");
+  } catch (err) {
+    setMangaSitesStatus("Erro: " + err.message);
+  }
+}
+
+async function saveMangaSites() {
+  const urls = $("manga-sites").value.split("\n").map((line) => line.trim()).filter(Boolean);
+  try {
+    const data = await api.post("/api/manga_sites", { sites: urls });
+    $("manga-sites").value = (data.sites || []).join("\n");
+    setMangaSitesStatus("Sites salvos.");
+  } catch (err) {
+    setMangaSitesStatus("Erro: " + err.message);
+  }
+}
+
 $("search-btn").addEventListener("click", searchAnime);
 $("search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchAnime(); });
 $("assemble-btn").addEventListener("click", assembleInfo);
+$("assemble-full-btn").addEventListener("click", assembleFullInfo);
 $("sites-save").addEventListener("click", saveSites);
+$("manga-search-btn").addEventListener("click", searchManga);
+$("manga-search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchManga(); });
+$("manga-sites-save").addEventListener("click", saveMangaSites);
 $("refresh").addEventListener("click", pollTasks);
 loadSites();
+loadMangaSites();
 pollTasks();
 setInterval(pollTasks, 1500);
 </script>
