@@ -16,6 +16,7 @@ import httpx
 
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .mangafire_parse import image_extension, sanitize
+from .animestream_net import retry_call
 
 GALLERY_HOSTS = (
     r"imgur\.com",
@@ -74,10 +75,16 @@ class GalleryScraper(Scraper):
         extr = extractor.find(url)
         if extr is None:
             raise ScraperError("URL nao reconhecida pelo gallery-dl.")
-        try:
-            messages = list(extr)
-        except Exception as exc:  # erro de rede/extrator do gallery-dl
-            raise ScraperError(f"Falha ao extrair a galeria: {exc}") from exc
+
+        def extract() -> list:
+            try:
+                # extrator NOVO a cada tentativa: um iterador parcialmente
+                # consumido retomaria do meio e truncaria a galeria em silencio
+                return list(extractor.find(url) or [])
+            except Exception as exc:  # erro de rede/extrator do gallery-dl
+                raise ScraperError(f"Falha ao extrair a galeria: {exc}") from exc
+
+        messages = retry_call(extract, attempts=2, wait_s=5)
         images = [msg for msg in messages if len(msg) == 3 and msg[0] == Message.Url]
         if not images:
             raise ScraperError("Nenhuma imagem encontrada nesta galeria.")

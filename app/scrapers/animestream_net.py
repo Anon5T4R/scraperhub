@@ -9,12 +9,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .base import DOWNLOADS_DIR, ProgressCb, ScraperError
+from .base import DOWNLOADS_DIR, ProgressCb, ScraperError, USER_AGENT
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-)
 RATE_S = 0.5
 EP_RETRIES = 3
 RETRY_WAIT_S = 8
@@ -34,6 +30,32 @@ class SilentLogger:
 
     def error(self, msg: str) -> None:  # noqa: ARG002
         pass
+
+
+def retry_call(
+    operation: Callable[[], Any],
+    attempts: int = 3,
+    wait_s: float = 8.0,
+    on_retry: Callable[[int, Exception], None] | None = None,
+) -> Any:
+    """Executa `operation` com retentativas para falhas transitorias.
+
+    Erros de rede (httpx.HTTPError) e ScraperError sao tentados ate
+    `attempts` vezes com pausa de `wait_s` entre elas; `on_retry(tentativa,
+    exc)` permite reportar progresso. Qualquer outro erro (bug de codigo)
+    e levantado na hora, sem retry. Levanta a ultima excecao se todas
+    falharem.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except (httpx.HTTPError, ScraperError) as exc:
+            if attempt >= attempts:
+                raise
+            if on_retry is not None:
+                on_retry(attempt, exc)
+            time.sleep(wait_s)
+    raise AssertionError("inalcancavel")  # pragma: no cover
 
 
 def host(url: str) -> str:

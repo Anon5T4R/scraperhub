@@ -402,6 +402,18 @@ $("header-badge").addEventListener("click", () => selectTab($("tab-tasks")));
 
 // ---- analise por aba --------------------------------------------------------
 
+// popula os selects de force com a lista real de scrapers do backend;
+// as opcoes estaticas do HTML ficam como fallback se a API falhar
+async function loadScraperOptions() {
+  try {
+    const data = await api.get("/api/scrapers");
+    for (const sel of document.querySelectorAll("select[id^='force-']")) {
+      const auto = sel.querySelector("option");
+      sel.replaceChildren(auto, ...data.scrapers.map((s) => new Option(s.label, s.id)));
+    }
+  } catch (err) { /* mantem as opcoes estaticas */ }
+}
+
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
   if (opts.class) node.className = opts.class;
@@ -444,11 +456,10 @@ async function analyzeInto(cfg) {
   cfg.result.classList.add("hidden");
   cfg.result.replaceChildren();
   try {
-    const detected = await api.post("/api/detect", { url, force });
     const info = await api.post("/api/info", { url, force });
-    cfg.current = { url, force, info, kind: detected.kind, scraperId: detected.scraper_id };
-    cfg.status.textContent = `Scraper detectado: ${detected.label} (${detected.kind})`;
-    renderResult(cfg.result, info, detected.kind, cfg);
+    cfg.current = { url, force, info, kind: info.kind, scraperId: info.scraper_id };
+    cfg.status.textContent = `Scraper detectado: ${info.label} (${info.kind})`;
+    renderResult(cfg.result, info, info.kind, cfg);
     cfg.result.classList.remove("hidden");
   } catch (err) {
     cfg.current = null;
@@ -639,9 +650,12 @@ function updateHeaderBadge(tasks) {
   badge.textContent = active === 1 ? "1 download em andamento" : `${active} downloads em andamento`;
 }
 
+let hasActiveTasks = false;
+
 async function pollTasks() {
   try {
     const tasks = await api.get("/api/tasks");
+    hasActiveTasks = tasks.some((t) => t.status === "running" || t.status === "pending");
     renderTasks(tasks);
     updateHeaderBadge(tasks);
   } catch (err) {
@@ -670,7 +684,7 @@ async function searchAnime() {
   $("assemble-result").replaceChildren();
   setAssembleStatus("");
   try {
-    const data = await api.post("/api/search", { term });
+    const data = await api.post("/api/search", { term, idioma: $("search-lang").value || "qualquer" });
     renderSearchResults(data);
     const hosts = Object.keys(data.erros || {});
     const sufixo = hosts.length ? ` (falha: ${hosts.join(", ")})` : "";
@@ -923,10 +937,13 @@ $("manga-search-btn").addEventListener("click", searchManga);
 $("manga-search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchManga(); });
 $("manga-sites-save").addEventListener("click", saveMangaSites);
 $("refresh").addEventListener("click", pollTasks);
+loadScraperOptions();
 loadSites();
 loadMangaSites();
 pollTasks();
-setInterval(pollTasks, 1500);
+// com tarefas ativas: 1,5s; sem tarefas: uma sondagem a cada ~15s (tick 10)
+let pollTick = 0;
+setInterval(() => { if (hasActiveTasks || pollTick % 10 === 0) pollTasks(); pollTick++; }, 1500);
 </script>
 </body>
 </html>

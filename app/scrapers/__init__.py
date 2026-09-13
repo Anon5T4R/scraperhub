@@ -11,6 +11,7 @@ from .filehost import FileHostScraper
 from .gallery import GalleryScraper
 from .mangafire import MangaFireScraper
 from .mirror import MirrorScraper
+from .seriesmanga import SeriesMangaScraper
 from .tsundoku import TsundokuScraper
 from .video import VideoScraper
 from .wpmanga import WpMangaScraper
@@ -21,6 +22,7 @@ REGISTRY: list[Scraper] = [
     MangaFireScraper(),
     TsundokuScraper(),
     WpMangaScraper(),
+    SeriesMangaScraper(),
     GalleryScraper(),
     EbookScraper(),
     FileHostScraper(),

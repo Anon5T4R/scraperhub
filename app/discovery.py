@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qs, quote_plus, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -26,14 +26,16 @@ MAX_HOSTS = 6
 def _search_results(term: str) -> list[str]:
     """URLs de resultado da busca HTML do DuckDuckGo, com fallback pro Google."""
     try:
-        response = httpx.get(
-            DDG_URL,
-            params={"q": f"{term} anime episodio online assistir"},
+        with httpx.Client(
             headers={"User-Agent": USER_AGENT},
             follow_redirects=True,
             timeout=20,
-        )
-        response.raise_for_status()
+        ) as client:
+            response = client.get(
+                DDG_URL,
+                params={"q": f"{term} anime episodio online assistir"},
+            )
+            response.raise_for_status()
     except httpx.HTTPError:
         return []
     soup = BeautifulSoup(response.text, "lxml")
@@ -53,14 +55,16 @@ def _search_results(term: str) -> list[str]:
 def _google_results(term: str) -> list[str]:
     """URLs de resultado da busca do Google (fallback quando o DDG nao retorna nada)."""
     try:
-        response = httpx.get(
-            GOOGLE_URL,
-            params={"q": f"{term} anime episodio online assistir", "num": 20},
+        with httpx.Client(
             headers={"User-Agent": USER_AGENT},
             follow_redirects=True,
             timeout=20,
-        )
-        response.raise_for_status()
+        ) as client:
+            response = client.get(
+                GOOGLE_URL,
+                params={"q": f"{term} anime episodio online assistir", "num": 20},
+            )
+            response.raise_for_status()
     except httpx.HTTPError:
         return []
     soup = BeautifulSoup(response.text, "lxml")
@@ -115,13 +119,13 @@ def discover_sites(term: str, conhecidos: list[str]) -> list[dict]:
     for entry in candidatos:
         host = urlparse(entry).hostname or ""
         try:
-            response = httpx.get(
-                entry,
+            with httpx.Client(
                 headers={"User-Agent": USER_AGENT},
                 follow_redirects=True,
                 timeout=15,
-            )
-            response.raise_for_status()
+            ) as client:
+                response = client.get(entry)
+                response.raise_for_status()
         except httpx.HTTPError:
             continue
         soup = BeautifulSoup(response.text, "lxml")

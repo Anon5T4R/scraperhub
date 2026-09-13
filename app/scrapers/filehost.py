@@ -7,17 +7,14 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
+from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
 from .mangafire_parse import sanitize
+from .animestream_net import retry_call
 
 FILE_EXTS = (".zip", ".rar", ".7z", ".iso", ".tar", ".gz", ".mp4")
 DRIVE_ID_RE = re.compile(r"[-\w]{25,}")
 MEDIAFIRE_SELECTORS = ("a.download_btn", "a#downloadButton", "a.input.popsok")
 MEDIAFIRE_HREF_RE = re.compile(r'href=["\'](https?://download[^"\']+)["\']', re.IGNORECASE)
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
 
 
 def _human_size(size: int) -> str:
@@ -99,10 +96,22 @@ class FileHostScraper(Scraper):
         out = DOWNLOADS_DIR / "filehost"
         out.mkdir(parents=True, exist_ok=True)
         progress_cb(0, "Baixando do Google Drive...")
-        try:
-            result = gdown.download(url=url, output=str(out) + "/", quiet=True)
-        except Exception as exc:  # gdown levanta variados tipos
-            raise ScraperError(f"Falha no download do Google Drive: {exc}") from exc
+
+        def download() -> str | None:
+            try:
+                return gdown.download(url=url, output=str(out) + "/", quiet=True)
+            except Exception as exc:  # gdown levanta variados tipos
+                raise ScraperError(f"Falha no download do Google Drive: {exc}") from exc
+
+        result = retry_call(
+            download,
+            attempts=3,
+            wait_s=5,
+            on_retry=lambda tentativa, exc: progress_cb(
+                0,
+                f"falhou (tentativa {tentativa}/3): {str(exc)[-80:]} — repetindo",
+            ),
+        )
         if not result:
             raise ScraperError(
                 "gdown nao conseguiu baixar este arquivo (link privado ou cota excedida?)."
@@ -118,12 +127,12 @@ class FileHostScraper(Scraper):
         current = url
         for _ in range(10):
             try:
-                response = httpx.head(
-                    current,
+                with httpx.Client(
                     headers={"User-Agent": USER_AGENT},
                     follow_redirects=False,
                     timeout=30,
-                )
+                ) as client:
+                    response = client.head(current)
             except httpx.HTTPError:
                 # servidor que nao responde HEAD (405/403): o GET com
                 # follow_redirects do _download_stream resolve o redirect
@@ -140,7 +149,10 @@ class FileHostScraper(Scraper):
         out.mkdir(parents=True, exist_ok=True)
         path = out / sanitize(filename)
         final_url = FileHostScraper._resolve_redirects(url)
-        try:
+        percent = 0
+
+        def stream() -> None:
+            nonlocal percent
             with httpx.Client(
                 headers={"User-Agent": USER_AGENT}, follow_redirects=True, timeout=120
             ) as client:
@@ -154,6 +166,17 @@ class FileHostScraper(Scraper):
                             done += len(chunk)
                             percent = int(done * 100 / total) if total else 0
                             progress_cb(percent, f"Baixando {filename}... {percent}%")
+
+        try:
+            retry_call(
+                stream,
+                attempts=3,
+                wait_s=5,
+                on_retry=lambda tentativa, exc: progress_cb(
+                    percent,
+                    f"falhou (tentativa {tentativa}/3): {str(exc)[-80:]} — repetindo",
+                ),
+            )
         except httpx.HTTPError as exc:
             path.unlink(missing_ok=True)
             raise ScraperError(f"Falha ao baixar o arquivo: {exc}") from exc

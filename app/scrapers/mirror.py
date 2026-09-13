@@ -14,13 +14,9 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
+from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
 from .mangafire_parse import sanitize
 
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
 MAX_PAGES_DEFAULT = 15
 DEPTH_DEFAULT = 2
 MAX_BINARY_BYTES = 200 * 1024 * 1024

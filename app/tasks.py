@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .scrapers.base import TaskCancelled
 
 MAX_LOG_LINES = 50
+MAX_FINISHED_TASKS = 50
 TaskRun = Callable[[str], None]
 
 
@@ -36,7 +37,24 @@ class TaskManager:
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         self._executor.submit(self._run, task_id, run)
+        with self._lock:
+            self._prune()
         return task_id
+
+    def _prune(self) -> None:
+        """Remove as tarefas finalizadas mais antigas (mantem MAX_FINISHED_TASKS).
+
+        Deve ser chamada dentro do lock. So remove tarefas terminadas:
+        pending/running nunca sao descartadas.
+        """
+        finalizados = [
+            tid
+            for tid, task in self._tasks.items()
+            if task["status"] in ("done", "error", "cancelled")
+        ]
+        excedente = len(finalizados) - MAX_FINISHED_TASKS
+        for tid in finalizados[:excedente]:  # dict preserva ordem: mais antigas primeiro
+            del self._tasks[tid]
 
     def cancel(self, task_id: str) -> bool:
         """Marca a tarefa para cancelamento; False se ja finalizada ou inexistente."""

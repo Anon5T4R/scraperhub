@@ -13,8 +13,9 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
+from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
 from .mangafire_parse import sanitize
+from .animestream_net import retry_call
 
 EBOOK_EXTS = (".epub", ".pdf", ".mobi", ".azw3", ".fb2")
 PROTECTED_EXTS = (".acsm", ".azw", ".azw3", ".prc")
@@ -24,10 +25,6 @@ MAX_LINKS = 200
 DRM_MESSAGE = (
     "Conteudo protegido por DRM (Adobe/Kindle). "
     "O ScraperHub nao realiza download de conteudo com DRM."
-)
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
 
@@ -126,12 +123,15 @@ class EbookScraper(Scraper):
 
     @staticmethod
     def _fetch(client: httpx.Client, url: str) -> bytes:
-        try:
+        def fetch() -> bytes:
             response = client.get(url)
             response.raise_for_status()
+            return response.content
+
+        try:
+            return retry_call(fetch, attempts=3, wait_s=5)
         except httpx.HTTPError as exc:
             raise ScraperError(f"Falha ao acessar {url}: {exc}") from exc
-        return response.content
 
     @staticmethod
     def _filename(url: str) -> str:

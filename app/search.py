@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
 
@@ -18,6 +19,7 @@ MAX_RESULTS = 20
 REQUEST_TIMEOUT = 20
 LANGUAGE_PADRAO = "Legendado (padrao do site)"
 _QUALITY_CACHE: dict[str, str] = {}
+_QUALITY_LOCK = threading.Lock()
 
 
 def default_sites() -> list[str]:
@@ -54,11 +56,12 @@ def save_sites(urls: list[str]) -> list[str]:
     return saved
 
 
-def search_all(term: str) -> tuple[list[dict], dict[str, str]]:
+def search_all(term: str, idioma: str = "qualquer") -> tuple[list[dict], dict[str, str]]:
     """Busca o termo em todos os sites; retorna (resultados, erros por host).
 
     Filtra resultados irrelevantes (sites que retornam qualquer coisa),
-    mas mantem a lista crua se o filtro remover tudo.
+    mas mantem a lista crua se o filtro remover tudo. Quando `idioma` nao
+    e "qualquer", filtra também pelo idioma detectado de cada resultado.
     """
     from .discovery import relevante
 
@@ -81,7 +84,11 @@ def search_all(term: str) -> tuple[list[dict], dict[str, str]]:
     relevantes = [
         r for r in results if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)
     ]
-    return (relevantes or results), errors
+    filtrados = relevantes or results
+    if idioma and idioma.lower() != "qualquer":
+        alvo = idioma.lower()
+        filtrados = [r for r in filtrados if alvo in str(r.get("idioma") or "").lower()]
+    return filtrados, errors
 
 
 def _search_site(home: str, term: str) -> list[dict]:
@@ -171,8 +178,10 @@ def verify_quality(url: str) -> dict:
 
 def probe_quality(source: str) -> str:
     """Maior resolucao (altura) entre os formatos reportados pelo yt-dlp."""
-    if source in _QUALITY_CACHE:
-        return _QUALITY_CACHE[source]
+    with _QUALITY_LOCK:
+        cached = _QUALITY_CACHE.get(source)
+    if cached is not None:
+        return cached
     import time
 
     import yt_dlp
@@ -193,7 +202,8 @@ def probe_quality(source: str) -> str:
         except Exception:
             if attempt:
                 result = "desconhecida"
-                _QUALITY_CACHE[source] = result
+                with _QUALITY_LOCK:
+                    _QUALITY_CACHE[source] = result
                 return result
             time.sleep(2)
     formats = (info or {}).get("formats") or []
@@ -204,5 +214,6 @@ def probe_quality(source: str) -> str:
         # playlist unica sem resolucao publicada (comum nesses CDNs);
         # o download pega sempre a unica faixa disponivel
         result = "unica"
-    _QUALITY_CACHE[source] = result
+    with _QUALITY_LOCK:
+        _QUALITY_CACHE[source] = result
     return result

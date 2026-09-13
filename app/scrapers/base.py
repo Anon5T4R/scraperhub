@@ -18,6 +18,10 @@ def app_root() -> Path:
 
 PROJECT_ROOT = app_root()
 DOWNLOADS_DIR = PROJECT_ROOT / "downloads"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 class ScraperError(Exception):

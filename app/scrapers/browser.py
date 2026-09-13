@@ -10,14 +10,9 @@ from typing import Iterator
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
-from .base import ScraperError, app_root
+from .base import USER_AGENT, ScraperError, app_root
 
-DEFAULT_TIMEOUT_MS = 30000
 VIEWPORT = {"width": 1366, "height": 900}
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
 
 
 def _driver_cli() -> list[str] | None:

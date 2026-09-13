@@ -18,18 +18,15 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import BrowserContext, Page
 
 from . import browser
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
+from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
 from .mangafire_parse import image_extension, make_cbz, sanitize
+from .animestream_net import retry_call
 
 CHAPTER_NUM_RE = re.compile(r"cap-(\d+)", re.IGNORECASE)
 CHAPTER_IMG_SELECTOR = "#readerarea img"
 SKIP_IMG_RE = re.compile(
     r"logo|avatar|banner|emoji|gravatar|pixel\.wp|Apoio|TsunBranca|readerarea",
     re.IGNORECASE,
-)
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 NAV_TIMEOUT_MS = 45000
 IMG_MAX_ITER = 60
@@ -95,8 +92,12 @@ class TsundokuScraper(Scraper):
                 follow_redirects=True,
                 timeout=30,
             ) as client:
-                response = client.get(series_url)
-                response.raise_for_status()
+                def fetch() -> httpx.Response:
+                    response = client.get(series_url)
+                    response.raise_for_status()
+                    return response
+
+                response = retry_call(fetch, attempts=3, wait_s=5)
         except httpx.HTTPError as exc:
             raise ScraperError(f"Falha ao acessar a pagina da serie: {exc}") from exc
         soup = BeautifulSoup(response.content, "lxml")
@@ -201,10 +202,22 @@ class TsundokuScraper(Scraper):
             return
         folder.mkdir(parents=True, exist_ok=True)
         for position, image_url in enumerate(images, start=1):
-            data = browser.download_binary(page, image_url)
+            percent = int(((index - 1) + position / len(images)) / total * 100)
+
+            def fetch_image(u: str = image_url) -> bytes:
+                return browser.download_binary(page, u)
+
+            data = retry_call(
+                fetch_image,
+                attempts=3,
+                wait_s=5,
+                on_retry=lambda tentativa, exc: progress_cb(
+                    percent,
+                    f"falhou (tentativa {tentativa}/3): {str(exc)[-80:]} — repetindo",
+                ),
+            )
             extension = image_extension(image_url, data)
             (folder / f"{position:03d}{extension}").write_bytes(data)
-            percent = int(((index - 1) + position / len(images)) / total * 100)
             progress_cb(percent, f"Cap {label}/pg {position}")
             time.sleep(DELAY_S)
         if options.get("cbz"):

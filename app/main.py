@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -17,7 +19,7 @@ from .manga_search import (
     save_sites as save_manga_sites,
     search_manga,
 )
-from .scrapers import Scraper, ScraperError, TaskCancelled, detect, get_scraper, normalize_url
+from .scrapers import REGISTRY, Scraper, ScraperError, TaskCancelled, detect, get_scraper, normalize_url
 from .search import load_sites, save_sites, search_all, verify_quality
 from .tasks import TaskManager
 
@@ -31,7 +33,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.7.0")
+app = FastAPI(title="ScraperHub", version="1.8.0")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
@@ -84,9 +86,10 @@ class DownloadRequest(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    """Corpo com o termo de busca multi-site."""
+    """Corpo com o termo de busca multi-site e o idioma opcional."""
 
     term: str = Field(min_length=1)
+    idioma: str = "qualquer"
 
 
 class SitesRequest(BaseModel):
@@ -117,6 +120,37 @@ class MangaSearchRequest(BaseModel):
     term: str = Field(min_length=1)
 
 
+# Cache dos planos de montagem exibidos: o download reutiliza exatamente o
+# plano que o usuario aprovou (mesmas fontes/labels), sem re-propar a web.
+PLAN_TTL_S = 1800.0
+_plan_cache: dict[str, tuple[float, dict]] = {}
+_plan_lock = threading.Lock()
+
+
+def _plan_key(term: str, idioma: str, full: bool) -> str:
+    return f"{term.strip().lower()}|{idioma}|{int(full)}"
+
+
+def _store_plan(key: str, plan: dict) -> None:
+    with _plan_lock:
+        _plan_cache[key] = (time.monotonic(), plan)
+        expirados = [k for k, (when, _) in _plan_cache.items() if time.monotonic() - when > PLAN_TTL_S]
+        for k in expirados:
+            del _plan_cache[k]
+
+
+def _cached_plan(key: str) -> dict | None:
+    with _plan_lock:
+        entry = _plan_cache.get(key)
+        if entry is None:
+            return None
+        when, plan = entry
+        if time.monotonic() - when > PLAN_TTL_S:
+            del _plan_cache[key]
+            return None
+        return plan
+
+
 def _resolve(url: str, force: str | None = None) -> tuple[Scraper, str]:
     """Resolve o scraper para a URL, normalizando-a uma unica vez."""
     try:
@@ -134,6 +168,12 @@ def _resolve(url: str, force: str | None = None) -> tuple[Scraper, str]:
     return scraper, url
 
 
+@app.get("/api/scrapers")
+def api_scrapers() -> list[dict]:
+    """Lista os scrapers disponiveis (id, label, kind) para os selects da UI."""
+    return [{"id": s.id, "label": s.label, "kind": s.kind} for s in REGISTRY]
+
+
 @app.post("/api/detect")
 def api_detect(payload: UrlRequest) -> dict:
     """Detecta o scraper adequado para a URL (ou o forcado informado)."""
@@ -149,7 +189,7 @@ def api_info(payload: UrlRequest) -> dict:
         info = scraper.get_info(url)
     except ScraperError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return {"scraper_id": scraper.id, "kind": scraper.kind, **info}
+    return {"scraper_id": scraper.id, "kind": scraper.kind, "label": scraper.label, **info}
 
 
 @app.post("/api/download")
@@ -197,7 +237,7 @@ def api_search(payload: SearchRequest) -> dict:
     term = payload.term.strip()
     if not term:
         raise HTTPException(status_code=400, detail="Informe um termo de busca.")
-    resultados, erros = search_all(term)
+    resultados, erros = search_all(term, payload.idioma or "qualquer")
     return {"resultados": resultados, "erros": erros}
 
 
@@ -229,9 +269,11 @@ def api_assemble_info(payload: AssembleInfoRequest) -> dict:
     if not term:
         raise HTTPException(status_code=400, detail="Informe um termo de busca.")
     try:
-        return plan_season(term, payload.idioma or "qualquer")
+        plan = plan_season(term, payload.idioma or "qualquer")
     except ScraperError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _store_plan(_plan_key(term, payload.idioma or "qualquer", False), plan)
+    return plan
 
 
 @app.post("/api/assemble_download")
@@ -240,6 +282,7 @@ def api_assemble_download(payload: AssembleDownloadRequest) -> dict:
     term = payload.term.strip()
     if not term:
         raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+    plan = _cached_plan(_plan_key(term, payload.idioma or "qualquer", False))
 
     def run(task_id: str) -> None:
         def progress_cb(progress: int, message: str) -> None:
@@ -247,7 +290,7 @@ def api_assemble_download(payload: AssembleDownloadRequest) -> dict:
                 raise TaskCancelled()
             manager.update_progress(task_id, progress=progress, current_item=message, log=message)
 
-        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options)
+        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options, plan=plan)
 
     return {"task_id": manager.create(run)}
 
@@ -281,9 +324,11 @@ def api_assemble_full_info(payload: AssembleInfoRequest) -> dict:
     if not term:
         raise HTTPException(status_code=400, detail="Informe um termo de busca.")
     try:
-        return plan_full(term, payload.idioma or "qualquer")
+        plan = plan_full(term, payload.idioma or "qualquer")
     except ScraperError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    _store_plan(_plan_key(term, payload.idioma or "qualquer", True), plan)
+    return plan
 
 
 @app.post("/api/assemble_full_download")
@@ -292,6 +337,7 @@ def api_assemble_full_download(payload: AssembleDownloadRequest) -> dict:
     term = payload.term.strip()
     if not term:
         raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+    plan = _cached_plan(_plan_key(term, payload.idioma or "qualquer", True))
 
     def run(task_id: str) -> None:
         def progress_cb(progress: int, message: str) -> None:
@@ -299,7 +345,7 @@ def api_assemble_full_download(payload: AssembleDownloadRequest) -> dict:
                 raise TaskCancelled()
             manager.update_progress(task_id, progress=progress, current_item=message, log=message)
 
-        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options, full=True)
+        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options, full=True, plan=plan)
 
     return {"task_id": manager.create(run)}
 

@@ -37,6 +37,11 @@ baixar o navegador usado pelo scraper de manga.
   w2.chainsmokercat.website). Tambem cobre o padrao Madara
   (`/manga/{slug}/chapter/{n}` e `/manga/{slug}/{capitulo}/`) e o
   ReadAllComics (`/comic/{slug}/{capitulo}/`). HTTP puro, rapido.
+- **Manga por pagina de serie** (`seriesmanga`): sites cuja PAGINA DA SERIE
+  lista os capitulos (diferente do wpmanga, que le a home). Confirmado no
+  asurascans.com: serie `/comics/{slug}`, capitulo `/comics/{slug}/chapter/{n}`,
+  imagens de conteudo filtradas por `/chapters/` no CDN (capas/banners ficam
+  fora). HTTP puro, com deteccao do slug canonico via redirect.
 - **Tsundoku** (`tsundoku`): series PT-BR do tsundoku.com.br (light novels em
   texto e mangas com reader de imagens). A pagina da serie (`/manga/{slug}/`)
   lista todos os capitulos como links na raiz

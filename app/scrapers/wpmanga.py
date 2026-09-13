@@ -20,8 +20,9 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
+from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
 from .mangafire_parse import image_extension, make_cbz, sanitize
+from .animestream_net import retry_call
 
 CHAPTER_HREF_RE = re.compile(
     r"(?:"
@@ -43,10 +44,6 @@ CONTENT_SELECTORS = (
     "main img",
 )
 SKIP_IMG_RE = re.compile(r"kofi|ko-fi|cup-border|logo|avatar|banner|ads", re.IGNORECASE)
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-)
 REQUEST_GAP_S = 0.3
 
 
@@ -76,9 +73,13 @@ class WpMangaScraper(Scraper):
         return f"{parsed.scheme}://{parsed.netloc}/"
 
     def _get(self, client: httpx.Client, url: str) -> BeautifulSoup:
-        try:
+        def fetch() -> httpx.Response:
             response = client.get(url)
             response.raise_for_status()
+            return response
+
+        try:
+            response = retry_call(fetch, attempts=3, wait_s=5)
         except httpx.HTTPError as exc:
             raise ScraperError(f"Falha ao acessar {url}: {exc}") from exc
         return BeautifulSoup(response.text, "lxml")
@@ -197,12 +198,25 @@ class WpMangaScraper(Scraper):
                 folder.mkdir(parents=True, exist_ok=True)
                 for index, image_url in enumerate(images, start=1):
                     try:
-                        response = client.get(image_url)
-                        response.raise_for_status()
+
+                        def fetch_image(u: str = image_url) -> bytes:
+                            response = client.get(u)
+                            response.raise_for_status()
+                            return response.content
+
+                        data = retry_call(
+                            fetch_image,
+                            attempts=3,
+                            wait_s=5,
+                            on_retry=lambda tentativa, exc: progress_cb(
+                                int((done + 1) * 100 / total),
+                                f"falhou (tentativa {tentativa}/3): {str(exc)[-80:]} — repetindo",
+                            ),
+                        )
                     except httpx.HTTPError as exc:
                         raise ScraperError(f"Falha ao baixar pagina {index}: {exc}") from exc
-                    ext = image_extension(image_url, response.content)
-                    (folder / f"{index:03d}{ext}").write_bytes(response.content)
+                    ext = image_extension(image_url, data)
+                    (folder / f"{index:03d}{ext}").write_bytes(data)
                     progress_cb(
                         int((done + 1) * 100 / total),
                         f"{item['label']}/pg {index}/{len(images)}",

@@ -2,7 +2,7 @@
 import threading
 import time
 
-from app.tasks import MAX_LOG_LINES, TaskManager
+from app.tasks import MAX_FINISHED_TASKS, MAX_LOG_LINES, TaskManager
 
 
 def _wait(task_id: str, manager: TaskManager, timeout: float = 5.0) -> dict:
@@ -62,3 +62,19 @@ def test_log_cap_50():
     assert task["log"][-1] == "linha 59"
     libera.set()
     _wait(task_id, manager)
+
+
+def test_prune_mantem_apenas_ultimas_finalizadas():
+    manager = TaskManager(max_workers=2)
+    for _ in range(MAX_FINISHED_TASKS + 20):
+        manager.create(lambda _tid: None)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        tasks = manager.list_tasks()
+        if tasks and all(t["status"] in ("done", "error", "cancelled") for t in tasks):
+            break
+        time.sleep(0.05)
+    # o prune roda no create(): terminou acima do limite, lista fica limitada
+    manager.create(lambda _tid: None)
+    time.sleep(0.2)
+    assert len(manager.list_tasks()) <= MAX_FINISHED_TASKS + 1

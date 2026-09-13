@@ -215,7 +215,7 @@ def plan_season(
 ) -> dict:
     """Monta a temporada: fontes rankeadas e a melhor fonte por episodio."""
     scraper = scraper or AnimeStreamScraper()
-    resultados, _ = search_all(term)
+    resultados, _ = search_all(term, idioma)
     fontes = [r for r in resultados if scraper.match(str(r.get("url") or ""))]
     # filtro de relevancia: alguns sites retornam qualquer coisa na busca
     fontes = [r for r in fontes if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)]
@@ -244,7 +244,7 @@ def plan_full(
 ) -> dict:
     """Monta o anime COMPLETO: todas as temporadas, multi-fonte."""
     scraper = scraper or AnimeStreamScraper()
-    resultados, _ = search_all(term)
+    resultados, _ = search_all(term, idioma)
     fontes = [r for r in resultados if scraper.match(str(r.get("url") or ""))]
     # filtro de relevancia: alguns sites retornam qualquer coisa na busca
     fontes = [r for r in fontes if relevante(f"{r.get('title', '')} {r.get('url', '')}", term)]
@@ -277,10 +277,16 @@ def download_season(
     options: dict | None = None,
     scraper: AnimeStreamScraper | None = None,
     full: bool = False,
+    plan: dict | None = None,
 ) -> None:
-    """Baixa a temporada montada, com fallback por episodio e relatorio de procedencia."""
+    """Baixa a temporada montada, com fallback por episodio e relatorio de procedencia.
+
+    `plan` permite reutilizar um plano ja montado (o mesmo exibido e
+    aprovado pelo usuario), evitando re-propar as fontes no download.
+    """
     scraper = scraper or AnimeStreamScraper()
-    plan = plan_full(term, idioma, scraper) if full else plan_season(term, idioma, scraper)
+    if plan is None:
+        plan = plan_full(term, idioma, scraper) if full else plan_season(term, idioma, scraper)
     episodios = plan["episodios"]
     if wanted:
         pedidos = set(wanted)

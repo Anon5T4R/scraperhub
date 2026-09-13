@@ -23,14 +23,16 @@ from .mangafire_parse import (
 )
 
 TITLE_ROW_SELECTOR = "a.title-detail__row-link"
-TITLE_LIST_SELECTOR = ".title-detail__list"
 CHAPTER_IMG_SELECTOR = "img.reader-img"
 INFO_TIMEOUT_MS = 30000
 NAV_TIMEOUT_MS = 45000
 LIST_WAIT_MS = 1200
 IMG_MAX_ITER = 60
 IMG_WAIT_MS = 700
+IMG_FIRST_TIMEOUT_MS = 10000
 DELAY_S = 0.3
+IMG_ATTEMPTS = 2
+CHALLENGE_HINTS = ("challenge-form", "cf-challenge", "just a moment", "attention required")
 
 ROWS_JS = """
 els => els.map(e => ({
@@ -90,6 +92,7 @@ class MangaFireScraper(Scraper):
             if not ordered:
                 raise ScraperError("Nenhum capitulo valido foi selecionado.")
             total = len(ordered)
+            falhas: list[str] = []
             for index, item in enumerate(ordered, start=1):
                 label = str(item["label"])
                 progress_cb(
@@ -98,7 +101,7 @@ class MangaFireScraper(Scraper):
                 )
                 chapter_page = self._new_page(context)
                 try:
-                    self._download_chapter(
+                    falha = self._download_chapter(
                         chapter_page,
                         title_url,
                         DOWNLOADS_DIR / title,
@@ -110,9 +113,17 @@ class MangaFireScraper(Scraper):
                     )
                 finally:
                     chapter_page.close()
+                if falha:
+                    falhas.append(falha)
+                    continue
                 progress_cb(
                     int(index / total * 100),
                     f"Concluido capitulo {label} ({index}/{total})",
+                )
+            if falhas:
+                resumo = "; ".join(falhas[:10]) + (" ..." if len(falhas) > 10 else "")
+                raise ScraperError(
+                    f"{len(falhas)}/{total} capitulo(s) sem paginas ( falha: {resumo} )"
                 )
 
     @staticmethod
@@ -202,22 +213,33 @@ class MangaFireScraper(Scraper):
         progress_cb: ProgressCb,
         options: dict,
         total: int,
-    ) -> None:
+    ) -> str | None:
+        """Baixa um capitulo; retorna motivo de falha ou None se ok."""
         label = str(item["label"])
         folder = base / chapter_folder(index, label)
         chapter_url = f"{title_url}/chapter/{item['id']}"
-        try:
-            page.goto(chapter_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
-            browser.scroll_until_stable(page, CHAPTER_IMG_SELECTOR, IMG_MAX_ITER, IMG_WAIT_MS)
-            images = self._chapter_images(page)
-        except Exception as exc:
-            raise ScraperError(f"Falha ao ler o capitulo {label}: {exc}") from exc
+        images: list[str] = []
+        last_error: Exception | None = None
+        for attempt in range(1, IMG_ATTEMPTS + 1):
+            try:
+                images = self._load_chapter_images(page, chapter_url)
+            except Exception as exc:  # navegacao/timeout: uma retentativa
+                last_error = exc
+                images = []
+            if images:
+                break
+            if attempt < IMG_ATTEMPTS:
+                progress_cb(
+                    int((index - 1) / total * 100),
+                    f"Sem paginas em {label} (tentativa {attempt}); recarregando...",
+                )
         if not images:
-            progress_cb(int((index - 1) / total * 100), f"Sem paginas em {label}")
-            return
+            motivo = f"{label}: {last_error}" if last_error else f"{label}: reader sem imagens"
+            progress_cb(int((index - 1) / total * 100), f"Falhou {motivo}")
+            return motivo
         if folder.exists() and self._page_count(folder) == len(images):
             progress_cb(int((index - 1) / total * 100), f"Capitulo {label} ja baixado, pulando")
-            return
+            return None
         folder.mkdir(parents=True, exist_ok=True)
         for position, image_url in enumerate(images, start=1):
             data = browser.download_binary(page, image_url)
@@ -228,6 +250,28 @@ class MangaFireScraper(Scraper):
             time.sleep(DELAY_S)
         if options.get("cbz"):
             make_cbz(folder)
+        return None
+
+    def _load_chapter_images(self, page: Page, chapter_url: str) -> list[str]:
+        """Abre a pagina do capitulo e coleta as imagens do reader.
+
+        Levanta ScraperError imediatamente se a pagina for um challenge do
+        Cloudflare (martelar os proximos capitulos so piora o bloqueio).
+        """
+        page.goto(chapter_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        try:
+            page.wait_for_selector(CHAPTER_IMG_SELECTOR, timeout=IMG_FIRST_TIMEOUT_MS)
+        except Exception:
+            low = page.content().lower()
+            if any(hint in low for hint in CHALLENGE_HINTS):
+                raise ScraperError(
+                    "Site bloqueou a leitura (Cloudflare). "
+                    "Espere alguns minutos e tente de novo."
+                )
+            # sem imagens em IMG_FIRST_TIMEOUT_MS: segue para o scroll,
+            # que cobre readers lentos/lazy
+        browser.scroll_until_stable(page, CHAPTER_IMG_SELECTOR, IMG_MAX_ITER, IMG_WAIT_MS)
+        return self._chapter_images(page)
 
     @staticmethod
     def _chapter_images(page: Page) -> list[str]:

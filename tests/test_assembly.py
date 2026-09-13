@@ -1,5 +1,14 @@
 """Testes das funcoes de rotulo e qualidade da montagem de temporada."""
-from app.assembly import _canonical, _label_key, _label_num, _quality_score
+import pytest
+
+from app.assembly import (
+    _canonical,
+    _label_key,
+    _label_num,
+    _quality_score,
+    download_season,
+)
+from app.scrapers.base import ScraperError
 
 
 def test_label_num():
@@ -42,3 +51,12 @@ def test_quality_score():
 def test_quality_score_none():
     assert _quality_score(None) == -1
     assert _quality_score("") == -1
+
+
+def test_download_season_usa_plano_precomputado():
+    """Plano fornecido nao deve disparar busca na web (episodios vazios -> erro imediato)."""
+    plan = {"fontes": [], "episodios": []}
+    with pytest.raises(ScraperError):
+        download_season(
+            "qualquer-coisa", "qualquer", None, lambda progress, message: None, plan=plan
+        )
