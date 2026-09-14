@@ -14,6 +14,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .assembly import download_season, plan_full, plan_season
+from .ip_switch import (
+    available_providers as ip_switch_available,
+    load_config as load_ip_switch,
+    save_config as save_ip_switch,
+    switch_ip,
+)
 from .manga_search import (
     load_sites as load_manga_sites,
     save_sites as save_manga_sites,
@@ -33,7 +39,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.8.5")
+app = FastAPI(title="ScraperHub", version="1.8.6")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
@@ -118,6 +124,16 @@ class MangaSearchRequest(BaseModel):
     """Corpo com o termo de busca de mangas."""
 
     term: str = Field(min_length=1)
+
+
+class IpSwitchRequest(BaseModel):
+    """Corpo opcional para gravar a config da troca de IP."""
+
+    provider: str | None = None
+    command: str | None = None
+    wait_seconds: int | None = None
+    verify_url: str | None = None
+    auto: bool | None = None
 
 
 # Cache dos planos de montagem exibidos: o download reutiliza exatamente o
@@ -282,6 +298,29 @@ def api_download(payload: DownloadRequest) -> dict:
 def api_solve_challenge(payload: UrlRequest) -> dict:
     """Cria a tarefa do modo assistido (abre a janela para resolver o CAPTCHA)."""
     return {"task_id": _create_solve_task(payload)}
+
+
+@app.get("/api/ip_switch")
+def api_ip_switch_get() -> dict:
+    """Config atual da troca de IP + providers disponiveis nesta maquina."""
+    return {"config": load_ip_switch(), "available": ip_switch_available()}
+
+
+@app.post("/api/ip_switch")
+def api_ip_switch_post(payload: IpSwitchRequest) -> dict:
+    """Grava a config da troca de IP (usada pelo botao e pelo modo auto)."""
+    data = {key: value for key, value in payload.model_dump().items() if value is not None}
+    return {"config": save_ip_switch(data)}
+
+
+@app.post("/api/ip_switch/run")
+def api_ip_switch_run() -> dict:
+    """Cria a tarefa de troca de IP e retorna o id."""
+
+    def run(task_id: str) -> None:
+        switch_ip(_progress_reporter(task_id))
+
+    return {"task_id": manager.create(run)}
 
 
 @app.get("/api/tasks")

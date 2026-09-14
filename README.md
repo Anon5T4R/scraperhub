@@ -93,6 +93,36 @@ O seletor ao lado do campo de URL permite forcar um scraper especifico
 (Auto / Espelho de site / E-book / Galeria); com "Auto" a deteccao e
 automatica.
 
+## Troca de IP (fallback de bloqueio)
+
+Quando um site bloqueia por taxa (rate-limit), o ScraperHub pode trocar o IP de
+origem e tentar de novo. E opt-in e configuravel em `ip-switch.json` (na raiz
+do app; ignorado pelo git) ou pelo painel "Troca de IP" na aba Manga.
+
+- `provider: "off"` (padrao): desativado.
+- `provider: "warp"`: reconecta o Cloudflare One/WARP via `warp-cli`
+  (`disconnect` + `connect`) e confere o IP publico antes/depois.
+- `provider: "custom"`: roda o `command` configurado (qualquer VPN/servico com
+  CLI). `wait_seconds` define a espera apos a troca.
+- `auto: true`: troca o IP sozinho ao detectar o bloqueio, em vez de apenas
+  mostrar o painel assistido.
+
+```json
+{ "provider": "custom", "command": "wg-quick down wg0 && wg-quick up wg0", "wait_seconds": 8, "auto": false }
+```
+
+IMPORTANTE:
+- A troca de IP NAO burla CAPTCHA — apenas muda a origem quando o site bloqueia
+  por taxa. Quando a verificacao humana aparece, o usuario resolve no modo
+  assistido.
+- Cloudflare WARP e contraproducente contra challenge da Cloudflare: o WARP sai
+  pela propria rede da Cloudflare, entao nao ajuda (e pode piorar) num site
+  protegido pela Cloudflare; alem disso nao convive com outra VPN ativa.
+- Proton VPN no Windows NAO tem CLI (o CLI oficial e so Linux): nao serve como
+  provider; use `custom` se tiver um comando proprio.
+- Kaspersky VPN nao tem CLI: troque o servidor pela interface e use o botao
+  "Trocar de IP e tentar de novo".
+
 ## Executavel (um arquivo so, PORTATIL)
 
 ```powershell

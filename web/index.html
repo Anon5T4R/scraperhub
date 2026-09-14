@@ -286,6 +286,25 @@
           </div>
         </div>
       </details>
+      <details id="ip-switch-panel" style="margin-top:12px">
+        <summary class="muted" style="cursor:pointer">Troca de IP (fallback de bloqueio)</summary>
+        <div style="margin-top:10px">
+          <p class="muted">Quando o site bloquear por taxa, troque o IP de origem e tente de novo. Providers: Cloudflare WARP (warp-cli) ou um comando seu. Nao burla CAPTCHA.</p>
+          <div class="row" style="margin-top:8px">
+            <select id="ip-switch-provider">
+              <option value="off">Desativada (padrao)</option>
+              <option value="warp">Cloudflare WARP (warp-cli)</option>
+              <option value="custom">Comando personalizado</option>
+            </select>
+          </div>
+          <input id="ip-switch-command" type="text" placeholder="Comando de troca de IP (provider custom)" style="margin-top:8px">
+          <label class="check" style="margin-top:8px"><input id="ip-switch-auto" type="checkbox"> Trocar de IP automaticamente quando o site bloquear</label>
+          <div class="row between" style="margin-top:8px">
+            <span id="ip-switch-status" class="muted"></span>
+            <button id="ip-switch-save" class="ghost">Salvar</button>
+          </div>
+        </div>
+      </details>
     </section>
     <section class="card">
       <label for="url-manga">Cole o link do mang&aacute;</label>
@@ -467,7 +486,7 @@ const ANALYZERS = ["enanime", "manga", "video", "files"].map((name) => ({
   current: null, // { url, force, info, kind, scraperId }
 }));
 
-async function analyzeInto(cfg) {
+async function analyzeInto(cfg, autoTried = false) {
   const url = cfg.url.value.trim();
   const force = cfg.force.value || null;
   if (!url) { cfg.status.textContent = "Cole um link primeiro."; return; }
@@ -483,7 +502,14 @@ async function analyzeInto(cfg) {
   } catch (err) {
     cfg.current = null;
     cfg.status.textContent = "Erro: " + err.message;
-    if (err.status === 409) renderChallenge(cfg, url, force, err.message);
+    if (err.status === 409) {
+      if (!autoTried && (ipSwitch.config || {}).auto && ipSwitchReady()) {
+        setStatus(cfg, "Bloqueio detectado — trocando de IP automaticamente...");
+        await switchIpAndRetry(cfg, url, force, null);
+      } else {
+        renderChallenge(cfg, url, force, err.message);
+      }
+    }
   }
 }
 
@@ -499,6 +525,11 @@ function renderChallenge(cfg, url, force, message) {
   const controls = el("div", { class: "controls" });
   const button = el("button", { text: "Resolver verificacao (abrir navegador)" });
   button.addEventListener("click", () => solveChallenge(cfg, url, force, button));
+  if (ipSwitchReady()) {
+    const ipBtn = el("button", { class: "ghost", text: "Trocar de IP e tentar de novo" });
+    ipBtn.addEventListener("click", () => switchIpAndRetry(cfg, url, force, ipBtn));
+    controls.appendChild(ipBtn);
+  }
   controls.appendChild(button);
   wrap.appendChild(controls);
   cfg.result.appendChild(wrap);
@@ -1024,6 +1055,71 @@ async function saveMangaSites() {
   }
 }
 
+// ---- troca de IP (fallback de bloqueio) ---------------------------------------
+
+let ipSwitch = { config: null, available: null };
+
+async function loadIpSwitch() {
+  try {
+    const data = await api.get("/api/ip_switch");
+    ipSwitch = data;
+    const cfg = data.config || {};
+    $("ip-switch-provider").value = cfg.provider || "off";
+    $("ip-switch-command").value = cfg.command || "";
+    $("ip-switch-auto").checked = !!cfg.auto;
+    const warpOpt = $("ip-switch-provider").querySelector("option[value='warp']");
+    if (warpOpt && data.available && !data.available.warp) {
+      warpOpt.disabled = true;
+      warpOpt.textContent = "Cloudflare WARP (warp-cli nao encontrado)";
+    }
+  } catch (err) { /* silencioso */ }
+}
+
+async function saveIpSwitch() {
+  const provider = $("ip-switch-provider").value;
+  const command = $("ip-switch-command").value.trim();
+  const auto = $("ip-switch-auto").checked;
+  try {
+    const data = await api.post("/api/ip_switch", { provider, command, auto });
+    ipSwitch.config = data.config;
+    $("ip-switch-status").textContent = "Config salva.";
+  } catch (err) {
+    $("ip-switch-status").textContent = "Erro: " + err.message;
+  }
+}
+
+function ipSwitchReady() {
+  const cfg = ipSwitch.config || {};
+  if (!cfg.provider || cfg.provider === "off") return false;
+  if (cfg.provider === "custom" && !(cfg.command || "").trim()) return false;
+  if (cfg.provider === "warp" && ipSwitch.available && !ipSwitch.available.warp) return false;
+  return true;
+}
+
+async function switchIpAndRetry(cfg, url, force, button) {
+  if (button) { button.disabled = true; button.textContent = "Trocando de IP..."; }
+  setStatus(cfg, "Trocando de IP... (veja a aba Tarefas)");
+  let taskId;
+  try {
+    const res = await api.post("/api/ip_switch/run", {});
+    taskId = res.task_id;
+  } catch (err) {
+    setStatus(cfg, "Erro: " + err.message);
+    if (button) { button.disabled = false; button.textContent = "Trocar de IP e tentar de novo"; }
+    return;
+  }
+  await pollTasks();
+  try {
+    await waitTask(taskId);
+  } catch (err) {
+    setStatus(cfg, "Erro: " + err.message);
+    if (button) { button.disabled = false; button.textContent = "Trocar de IP e tentar de novo"; }
+    return;
+  }
+  setStatus(cfg, "IP trocado. Reanalisando...");
+  await analyzeInto(cfg, true);
+}
+
 $("search-btn").addEventListener("click", searchAnime);
 $("search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchAnime(); });
 $("assemble-btn").addEventListener("click", assembleInfo);
@@ -1032,10 +1128,12 @@ $("sites-save").addEventListener("click", saveSites);
 $("manga-search-btn").addEventListener("click", searchManga);
 $("manga-search").addEventListener("keydown", (event) => { if (event.key === "Enter") searchManga(); });
 $("manga-sites-save").addEventListener("click", saveMangaSites);
+$("ip-switch-save").addEventListener("click", saveIpSwitch);
 $("refresh").addEventListener("click", pollTasks);
 loadScraperOptions();
 loadSites();
 loadMangaSites();
+loadIpSwitch();
 pollTasks();
 // com tarefas ativas: 1,5s; sem tarefas: uma sondagem a cada ~15s (tick 10)
 let pollTick = 0;
