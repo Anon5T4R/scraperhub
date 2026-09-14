@@ -22,6 +22,13 @@ from .mangafire_parse import (
     sanitize,
     select_ascending,
 )
+from .mangafire_state import (
+    folder_pages,
+    is_complete,
+    load_state,
+    record_done,
+    save_state,
+)
 
 TITLE_ROW_SELECTOR = "a.title-detail__row-link"
 CHAPTER_IMG_SELECTOR = "img.reader-img"
@@ -208,11 +215,22 @@ class MangaFireScraper(Scraper):
             ordered = select_ascending(info["items"], item_ids)
             if not ordered:
                 raise ScraperError("Nenhum capitulo valido foi selecionado.")
+            base = DOWNLOADS_DIR / title
+            state = load_state(base)
             total = len(ordered)
             falhas: list[str] = []
             consecutivas = 0
             for index, item in enumerate(ordered, start=1):
+                chapter_id = str(item["id"])
                 label = str(item["label"])
+                folder = base / chapter_folder(index, label)
+                if is_complete(state, chapter_id, folder):
+                    # ja baixado: pula SEM abrir a pagina (retomada sem rede)
+                    progress_cb(
+                        int(index / total * 100),
+                        f"Capitulo {label} ja baixado, pulando",
+                    )
+                    continue
                 progress_cb(
                     int((index - 1) / total * 100),
                     f"Iniciando capitulo {label} ({index}/{total})",
@@ -222,7 +240,7 @@ class MangaFireScraper(Scraper):
                     falha = self._download_chapter(
                         chapter_page,
                         title_url,
-                        DOWNLOADS_DIR / title,
+                        folder,
                         index,
                         item,
                         progress_cb,
@@ -251,6 +269,8 @@ class MangaFireScraper(Scraper):
                     )
                     continue
                 consecutivas = 0
+                record_done(state, chapter_id, folder)
+                save_state(base, state)
                 progress_cb(
                     int(index / total * 100),
                     f"Concluido capitulo {label} ({index}/{total})",
@@ -357,16 +377,21 @@ class MangaFireScraper(Scraper):
         self,
         page: Page,
         title_url: str,
-        base: Path,
+        folder: Path,
         index: int,
         item: dict,
         progress_cb: ProgressCb,
         options: dict,
         total: int,
     ) -> str | None:
-        """Baixa um capitulo; retorna motivo de falha ou None se ok."""
+        """Baixa um capitulo; retorna motivo de falha ou None se ok.
+
+        O skip local (manifesto) e feito antes, em `_download_all`. Aqui
+        permanece o skip por rede para bibliotecas ANTIGAS (sem manifesto):
+        na primeira passada ele detecta o capitulo completo, pula e o
+        manifesto e gravado — as retomadas seguintes ja nao tocam a rede.
+        """
         label = str(item["label"])
-        folder = base / chapter_folder(index, label)
         chapter_url = f"{title_url}/chapter/{item['id']}"
         images: list[str] = []
         last_error: Exception | None = None
@@ -389,7 +414,7 @@ class MangaFireScraper(Scraper):
             motivo = f"{label}: {last_error}" if last_error else f"{label}: reader sem imagens"
             progress_cb(int((index - 1) / total * 100), f"Falhou {motivo}")
             return motivo
-        if folder.exists() and self._page_count(folder) == len(images):
+        if folder_pages(folder) == len(images):
             progress_cb(int((index - 1) / total * 100), f"Capitulo {label} ja baixado, pulando")
             return None
         folder.mkdir(parents=True, exist_ok=True)
@@ -435,7 +460,3 @@ class MangaFireScraper(Scraper):
                 seen.add(url)
                 result.append(url)
         return result
-
-    @staticmethod
-    def _page_count(folder: Path) -> int:
-        return sum(1 for entry in folder.iterdir() if entry.is_file())

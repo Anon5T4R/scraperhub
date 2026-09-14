@@ -39,7 +39,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.8.6")
+app = FastAPI(title="ScraperHub", version="1.8.7")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")

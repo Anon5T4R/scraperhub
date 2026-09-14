@@ -37,6 +37,7 @@ class TaskManager:
                 "current_item": None,
                 "log": [],
                 "error": None,
+                "error_challenge": False,
                 "cancel": False,
                 "retry": retry,
                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -85,7 +86,14 @@ class TaskManager:
             return
         except Exception as exc:  # noqa: BLE001 - erro do scraper vira estado da tarefa
             message = str(exc) or exc.__class__.__name__
-            self.update_progress(task_id, log=message, status="error", error=message)
+            self.update_progress(
+                task_id,
+                log=message,
+                status="error",
+                error=message,
+                # permite a UI oferecer o modo assistido em vez de so re-falhar
+                error_challenge=getattr(exc, "challenge", False),
+            )
             return
         self.update_progress(
             task_id, progress=100, current_item=None, log="Concluido", status="done"
@@ -99,6 +107,7 @@ class TaskManager:
         log: str | None = None,
         status: str | None = None,
         error: str | None = None,
+        error_challenge: bool | None = None,
     ) -> None:
         """Atualiza campos de uma tarefa; exposta ao scraper via callback."""
         with self._lock:
@@ -115,6 +124,8 @@ class TaskManager:
                 task["status"] = status
             if error is not None:
                 task["error"] = error
+            if error_challenge is not None:
+                task["error_challenge"] = bool(error_challenge)
 
     @staticmethod
     def _append_log(task: dict[str, Any], line: str) -> None:

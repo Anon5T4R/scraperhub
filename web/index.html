@@ -745,6 +745,16 @@ function renderTask(task) {
     });
     top.appendChild(cancelBtn);
   } else if ((task.status === "error" || task.status === "cancelled") && task.retry) {
+    if (task.error_challenge && task.retry.url) {
+      const solveBtn = el("button", { text: "Resolver verificacao" });
+      solveBtn.addEventListener("click", () => recoverTask(task, "solve", solveBtn));
+      top.appendChild(solveBtn);
+      if (ipSwitchReady()) {
+        const ipBtn = el("button", { class: "ghost", text: "Trocar de IP e tentar de novo" });
+        ipBtn.addEventListener("click", () => recoverTask(task, "ipswitch", ipBtn));
+        top.appendChild(ipBtn);
+      }
+    }
     const retryBtn = el("button", { text: "Tentar de novo" });
     retryBtn.addEventListener("click", async () => {
       retryBtn.disabled = true;
@@ -768,6 +778,45 @@ function renderTask(task) {
   if (task.current_item) card.appendChild(el("p", { class: "muted", text: task.current_item }));
   card.appendChild(el("pre", { class: "log", text: (task.log || []).join("\n") }));
   return card;
+}
+
+async function recoverTask(task, kind, button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = kind === "solve" ? "Abrindo o navegador..." : "Trocando de IP...";
+  let stepId;
+  try {
+    if (kind === "solve") {
+      const res = await api.post("/api/solve_challenge", { url: task.retry.url, force: task.retry.force });
+      stepId = res.task_id;
+    } else {
+      const res = await api.post("/api/ip_switch/run", {});
+      stepId = res.task_id;
+    }
+  } catch (err) {
+    alert("Erro: " + err.message);
+    button.disabled = false;
+    button.textContent = original;
+    return;
+  }
+  await pollTasks();
+  try {
+    await waitTask(stepId);
+  } catch (err) {
+    alert("Erro: " + err.message);
+    button.disabled = false;
+    button.textContent = original;
+    return;
+  }
+  try {
+    await api.post(`/api/tasks/${task.id}/retry`, {});
+  } catch (err) {
+    alert("Erro ao repetir: " + err.message);
+    button.disabled = false;
+    button.textContent = original;
+    return;
+  }
+  await pollTasks();
 }
 
 function updateHeaderBadge(tasks) {

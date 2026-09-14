@@ -67,3 +67,27 @@ def test_scrapers_expoe_supports_challenge():
     by_id = {s["id"]: s for s in client.get("/api/scrapers").json()}
     assert by_id["mangafire"]["supports_challenge"] is True
     assert by_id["video"]["supports_challenge"] is False
+
+
+def test_task_marca_error_challenge():
+    manager = TaskManager(max_workers=1)
+
+    def run(_task_id: str) -> None:
+        raise SiteBlocked("bloqueado")
+
+    task_id = manager.create(run)
+    _wait_status(manager, task_id, "error")
+    task = manager.get(task_id)
+    assert task and task["error_challenge"] is True
+
+
+def test_task_erro_comum_nao_marca_challenge():
+    manager = TaskManager(max_workers=1)
+
+    def run(_task_id: str) -> None:
+        raise RuntimeError("boom")
+
+    task_id = manager.create(run)
+    _wait_status(manager, task_id, "error")
+    task = manager.get(task_id)
+    assert task and task["error_challenge"] is False
