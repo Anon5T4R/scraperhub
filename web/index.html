@@ -650,6 +650,21 @@ function renderTask(task) {
       } catch (err) { /* ignora */ }
     });
     top.appendChild(cancelBtn);
+  } else if ((task.status === "error" || task.status === "cancelled") && task.retry) {
+    const retryBtn = el("button", { text: "Tentar de novo" });
+    retryBtn.addEventListener("click", async () => {
+      retryBtn.disabled = true;
+      retryBtn.textContent = "Recriando...";
+      try {
+        await api.post(`/api/tasks/${task.id}/retry`, {});
+        await pollTasks();
+      } catch (err) {
+        retryBtn.disabled = false;
+        retryBtn.textContent = "Tentar de novo";
+        alert("Erro ao repetir tarefa: " + err.message);
+      }
+    });
+    top.appendChild(retryBtn);
   }
   const bar = el("div", { class: "bar" });
   const fill = el("div", { class: `fill ${task.status}` });

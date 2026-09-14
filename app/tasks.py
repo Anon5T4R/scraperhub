@@ -22,8 +22,12 @@ class TaskManager:
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    def create(self, run: TaskRun) -> str:
-        """Registra uma tarefa e agenda sua execucao, retornando o id."""
+    def create(self, run: TaskRun, retry: dict[str, Any] | None = None) -> str:
+        """Registra uma tarefa e agenda sua execucao, retornando o id.
+
+        `retry` descreve como recriar esta tarefa (payload original do
+        endpoint) e permite o botao "Tentar de novo" na UI.
+        """
         task_id = uuid.uuid4().hex
         with self._lock:
             self._tasks[task_id] = {
@@ -34,6 +38,7 @@ class TaskManager:
                 "log": [],
                 "error": None,
                 "cancel": False,
+                "retry": retry,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         self._executor.submit(self._run, task_id, run)

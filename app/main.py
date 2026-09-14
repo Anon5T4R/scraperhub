@@ -33,7 +33,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.8.3")
+app = FastAPI(title="ScraperHub", version="1.8.4")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
@@ -192,20 +192,64 @@ def api_info(payload: UrlRequest) -> dict:
     return {"scraper_id": scraper.id, "kind": scraper.kind, "label": scraper.label, **info}
 
 
+def _progress_reporter(task_id: str):
+    def progress_cb(progress: int, message: str) -> None:
+        if manager.is_cancelled(task_id):
+            raise TaskCancelled()
+        manager.update_progress(task_id, progress=progress, current_item=message, log=message)
+
+    return progress_cb
+
+
+def _create_download_task(payload: DownloadRequest) -> str:
+    """Cria a tarefa de download (usada pelo endpoint e pelo retry)."""
+    scraper, url = _resolve(payload.url, payload.force)
+    retry = {
+        "kind": "download",
+        "url": payload.url,
+        "items": payload.items,
+        "options": payload.options,
+        "force": payload.force,
+    }
+
+    def run(task_id: str) -> None:
+        scraper.download(url, payload.items, _progress_reporter(task_id), payload.options)
+
+    return manager.create(run, retry=retry)
+
+
+def _create_assemble_task(payload: AssembleDownloadRequest, full: bool) -> str:
+    """Cria a tarefa de montacao+download (usada pelo endpoint e pelo retry)."""
+    term = payload.term.strip()
+    if not term:
+        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
+    plan = _cached_plan(_plan_key(term, payload.idioma or "qualquer", full))
+    retry = {
+        "kind": "assemble_full" if full else "assemble",
+        "term": term,
+        "idioma": payload.idioma,
+        "wanted": payload.wanted,
+        "options": payload.options,
+    }
+
+    def run(task_id: str) -> None:
+        download_season(
+            term,
+            payload.idioma or "qualquer",
+            payload.wanted,
+            _progress_reporter(task_id),
+            payload.options,
+            full=full,
+            plan=plan,
+        )
+
+    return manager.create(run, retry=retry)
+
+
 @app.post("/api/download")
 def api_download(payload: DownloadRequest) -> dict:
     """Cria uma tarefa de download em background e retorna o id."""
-    scraper, url = _resolve(payload.url, payload.force)
-
-    def run(task_id: str) -> None:
-        def progress_cb(progress: int, message: str) -> None:
-            if manager.is_cancelled(task_id):
-                raise TaskCancelled()
-            manager.update_progress(task_id, progress=progress, current_item=message, log=message)
-
-        scraper.download(url, payload.items, progress_cb, payload.options)
-
-    return {"task_id": manager.create(run)}
+    return {"task_id": _create_download_task(payload)}
 
 
 @app.get("/api/tasks")
@@ -279,20 +323,7 @@ def api_assemble_info(payload: AssembleInfoRequest) -> dict:
 @app.post("/api/assemble_download")
 def api_assemble_download(payload: AssembleDownloadRequest) -> dict:
     """Cria a tarefa de download da temporada montada e retorna o id."""
-    term = payload.term.strip()
-    if not term:
-        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
-    plan = _cached_plan(_plan_key(term, payload.idioma or "qualquer", False))
-
-    def run(task_id: str) -> None:
-        def progress_cb(progress: int, message: str) -> None:
-            if manager.is_cancelled(task_id):
-                raise TaskCancelled()
-            manager.update_progress(task_id, progress=progress, current_item=message, log=message)
-
-        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options, plan=plan)
-
-    return {"task_id": manager.create(run)}
+    return {"task_id": _create_assemble_task(payload, full=False)}
 
 
 @app.post("/api/manga_search")
@@ -334,20 +365,36 @@ def api_assemble_full_info(payload: AssembleInfoRequest) -> dict:
 @app.post("/api/assemble_full_download")
 def api_assemble_full_download(payload: AssembleDownloadRequest) -> dict:
     """Cria a tarefa de download do anime completo montado."""
-    term = payload.term.strip()
-    if not term:
-        raise HTTPException(status_code=400, detail="Informe um termo de busca.")
-    plan = _cached_plan(_plan_key(term, payload.idioma or "qualquer", True))
+    return {"task_id": _create_assemble_task(payload, full=True)}
 
-    def run(task_id: str) -> None:
-        def progress_cb(progress: int, message: str) -> None:
-            if manager.is_cancelled(task_id):
-                raise TaskCancelled()
-            manager.update_progress(task_id, progress=progress, current_item=message, log=message)
 
-        download_season(term, payload.idioma or "qualquer", payload.wanted, progress_cb, payload.options, full=True, plan=plan)
-
-    return {"task_id": manager.create(run)}
+@app.post("/api/tasks/{task_id}/retry")
+def api_task_retry(task_id: str) -> dict:
+    """Recria uma tarefa com erro/cancelada a partir do payload original."""
+    task = manager.get(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Tarefa nao encontrada.")
+    if task["status"] not in ("error", "cancelled"):
+        raise HTTPException(status_code=400, detail="So tarefas com erro ou canceladas podem ser repetidas.")
+    retry = task.get("retry") or {}
+    kind = retry.get("kind")
+    if kind == "download":
+        payload = DownloadRequest(
+            url=retry["url"],
+            items=retry.get("items") or [],
+            options=retry.get("options") or {},
+            force=retry.get("force"),
+        )
+        return {"task_id": _create_download_task(payload)}
+    if kind in ("assemble", "assemble_full"):
+        payload = AssembleDownloadRequest(
+            term=retry.get("term") or "",
+            idioma=retry.get("idioma") or "qualquer",
+            wanted=retry.get("wanted"),
+            options=retry.get("options") or {},
+        )
+        return {"task_id": _create_assemble_task(payload, full=kind == "assemble_full")}
+    raise HTTPException(status_code=400, detail="Tarefa sem dados para repetir.")
 
 
 app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")
