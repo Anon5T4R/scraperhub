@@ -98,3 +98,28 @@ def test_chapter_images_filtra_capa_e_banner():
         "https://cdn.asurascans.com/asura-images/chapters/serie/1/001.webp",
         "https://cdn.asurascans.com/asura-images/chapters/serie/1/002.webp",
     ]
+
+
+# ---- mangafire: challenge Turnstile + label com idioma ----------------------
+
+def test_detecta_challenge_turnstile():
+    from app.scrapers.mangafire import is_challenge_html
+
+    # pagina real vista em bloqueio por taxa (Security check / Turnstile)
+    assert is_challenge_html("<html><title>security check</title></html>".lower())
+    assert is_challenge_html("verify you're human — click the shapes".lower())
+    assert is_challenge_html("just a moment...")
+    assert not is_challenge_html("<div>reader with img.reader-img pages</div>")
+
+
+def test_items_label_inclui_idioma():
+    from app.scrapers.mangafire import MangaFireScraper
+
+    rows = [
+        {"href": "/title/x/chapter/1", "num": "Ch. 49", "sub": "", "flag": "English"},
+        {"href": "/title/x/chapter/2", "num": "Ch. 49", "sub": "", "flag": ""},
+        {"href": "/title/x/chapter/1", "num": "Ch. 49", "sub": "", "flag": "English"},  # dup
+    ]
+    items = MangaFireScraper._items(rows)
+    labels = [i["label"] for i in items]
+    assert labels == ["Ch. 49 [English]", "Ch. 49"]

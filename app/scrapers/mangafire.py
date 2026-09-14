@@ -1,6 +1,7 @@
 """Scraper de manga para sites SPA no estilo mangafire.to (Playwright)."""
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -31,8 +32,34 @@ IMG_MAX_ITER = 60
 IMG_WAIT_MS = 700
 IMG_FIRST_TIMEOUT_MS = 10000
 DELAY_S = 0.3
+CHAPTER_GAP_S = 2.0
 IMG_ATTEMPTS = 2
-CHALLENGE_HINTS = ("challenge-form", "cf-challenge", "just a moment", "attention required")
+MAX_CONSECUTIVE_FAILURES = 5
+CHALLENGE_HINTS = (
+    "challenge-form",
+    "cf-challenge",
+    "just a moment",
+    "attention required",
+    # Turnstile interativo (Security check) — visto em bloqueio por taxa
+    "verify you're human",
+    "security check",
+    "cf-turnstile",
+    "click the shapes",
+)
+
+
+class SiteBlocked(ScraperError):
+    """O site pediu verificacao humana (CAPTCHA): abortar sem retry."""
+
+
+# Um download mangafire por vez: duas tarefas simultaneas no mesmo site
+# disparam o bloqueio anti-bot (Turnstile) rapidamente.
+_DOWNLOAD_LOCK = threading.Lock()
+
+
+def is_challenge_html(low_html: str) -> bool:
+    """True se o HTML parece uma pagina de bloqueio/challenge."""
+    return any(hint in low_html for hint in CHALLENGE_HINTS)
 
 ROWS_JS = """
 els => els.map(e => ({
@@ -81,6 +108,18 @@ class MangaFireScraper(Scraper):
     ) -> None:
         options = options or {}
         title_url = parse_title_url(url)
+        if _DOWNLOAD_LOCK.locked():
+            progress_cb(0, "Aguardando outro download MangaFire terminar (evita bloqueio)...")
+        with _DOWNLOAD_LOCK:
+            self._download_all(title_url, item_ids, progress_cb, options)
+
+    def _download_all(
+        self,
+        title_url: str,
+        item_ids: list[str],
+        progress_cb: ProgressCb,
+        options: dict,
+    ) -> None:
         with browser.run() as context:
             page = self._new_page(context)
             try:
@@ -93,6 +132,7 @@ class MangaFireScraper(Scraper):
                 raise ScraperError("Nenhum capitulo valido foi selecionado.")
             total = len(ordered)
             falhas: list[str] = []
+            consecutivas = 0
             for index, item in enumerate(ordered, start=1):
                 label = str(item["label"])
                 progress_cb(
@@ -115,11 +155,24 @@ class MangaFireScraper(Scraper):
                     chapter_page.close()
                 if falha:
                     falhas.append(falha)
+                    consecutivas += 1
+                    if consecutivas >= MAX_CONSECUTIVE_FAILURES:
+                        restantes = total - index
+                        resumo = "; ".join(falhas[-MAX_CONSECUTIVE_FAILURES:])
+                        raise ScraperError(
+                            f"{MAX_CONSECUTIVE_FAILURES} capitulos seguidos sem paginas "
+                            f"({resumo}). Abortados {restantes} restante(s) para nao "
+                            "piorar um provavel bloqueio do site — espere alguns "
+                            "minutos e tente de novo (os ja baixados sao pulados)."
+                        )
                     continue
+                consecutivas = 0
                 progress_cb(
                     int(index / total * 100),
                     f"Concluido capitulo {label} ({index}/{total})",
                 )
+                if index < total:
+                    time.sleep(CHAPTER_GAP_S)
             if falhas:
                 resumo = "; ".join(falhas[:10]) + (" ..." if len(falhas) > 10 else "")
                 raise ScraperError(
@@ -194,11 +247,17 @@ class MangaFireScraper(Scraper):
             if not chapter_id or chapter_id in seen:
                 continue
             seen.add(chapter_id)
+            label = chapter_label(str(row.get("num") or ""), str(row.get("sub") or ""))
+            flag = str(row.get("flag") or "")
+            if flag:
+                # o mesmo numero existe em varios idiomas: sem isso o
+                # usuario baixa 3x "Ch. 49" sem saber a diferenca
+                label = f"{label} [{flag}]"
             items.append(
                 {
                     "id": chapter_id,
-                    "label": chapter_label(str(row.get("num") or ""), str(row.get("sub") or "")),
-                    "flag": str(row.get("flag") or ""),
+                    "label": label,
+                    "flag": flag,
                 }
             )
         return order_items(items)
@@ -223,6 +282,8 @@ class MangaFireScraper(Scraper):
         for attempt in range(1, IMG_ATTEMPTS + 1):
             try:
                 images = self._load_chapter_images(page, chapter_url)
+            except SiteBlocked:
+                raise  # CAPTCHA: retry so piora o bloqueio
             except Exception as exc:  # navegacao/timeout: uma retentativa
                 last_error = exc
                 images = []
@@ -255,23 +316,30 @@ class MangaFireScraper(Scraper):
     def _load_chapter_images(self, page: Page, chapter_url: str) -> list[str]:
         """Abre a pagina do capitulo e coleta as imagens do reader.
 
-        Levanta ScraperError imediatamente se a pagina for um challenge do
-        Cloudflare (martelar os proximos capitulos so piora o bloqueio).
+        Levanta SiteBlocked imediatamente se a pagina for um challenge do
+        Cloudflare/Turnstile (martelar os proximos capitulos so piora o
+        bloqueio e o CAPTCHA nao e burlado).
         """
         page.goto(chapter_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
         try:
             page.wait_for_selector(CHAPTER_IMG_SELECTOR, timeout=IMG_FIRST_TIMEOUT_MS)
         except Exception:
-            low = page.content().lower()
-            if any(hint in low for hint in CHALLENGE_HINTS):
-                raise ScraperError(
-                    "Site bloqueou a leitura (Cloudflare). "
-                    "Espere alguns minutos e tente de novo."
+            if is_challenge_html(page.content().lower()):
+                raise SiteBlocked(
+                    "Site pediu verificacao humana (CAPTCHA). Cancele, espere "
+                    "alguns minutos e tente de novo — o ScraperHub nao burla "
+                    "CAPTCHA. Os capitulos ja baixados sao pulados no retry."
                 )
             # sem imagens em IMG_FIRST_TIMEOUT_MS: segue para o scroll,
             # que cobre readers lentos/lazy
         browser.scroll_until_stable(page, CHAPTER_IMG_SELECTOR, IMG_MAX_ITER, IMG_WAIT_MS)
-        return self._chapter_images(page)
+        images = self._chapter_images(page)
+        if not images and is_challenge_html(page.content().lower()):
+            raise SiteBlocked(
+                "Site pediu verificacao humana (CAPTCHA). Cancele, espere "
+                "alguns minutos e tente de novo."
+            )
+        return images
 
     @staticmethod
     def _chapter_images(page: Page) -> list[str]:

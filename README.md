@@ -32,6 +32,11 @@ baixar o navegador usado pelo scraper de manga.
   Aceita qualquer host que contenha "mangafire" e tambem URLs no formato
   `*/title/{slug}` ou `*/title/{slug}/chapter/{id}` quando nenhum outro scraper
   reconhece o host. A primeira carga de uma pagina demora ~10s (renderizacao).
+  Downloads MangaFire rodam UM POR VEZ (lock) com pausa entre capitulos: o
+  site bloqueia com CAPTCHA (Turnstile) sob acesso concorrente/rapido — o
+  ScraperHub detecta o bloqueio, aborta com aviso claro e NAO burla CAPTCHA;
+  capitulos ja baixados sao pulados ao tentar de novo. O rotulo do capitulo
+  inclui o idioma (`[English]` etc): o mesmo numero existe em varias linguas.
 - **Manga WordPress** (`wpmanga`): sites WordPress server-rendered cuja home
   lista capitulos como links `/manga/{slug}-chapter-N` (ex:
   w2.chainsmokercat.website). Tambem cobre o padrao Madara
