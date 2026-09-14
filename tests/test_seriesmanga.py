@@ -123,3 +123,16 @@ def test_items_label_inclui_idioma():
     items = MangaFireScraper._items(rows)
     labels = [i["label"] for i in items]
     assert labels == ["Ch. 49 [English]", "Ch. 49"]
+
+
+def test_cooldown_reporta_e_dorme_em_passos(monkeypatch):
+    import app.scrapers.mangafire as mf
+
+    dormido: list[int] = []
+    mensagens: list[str] = []
+    monkeypatch.setattr(mf.time, "sleep", lambda s: dormido.append(s))
+    mf.cooldown(lambda p, m: mensagens.append(m), 50, mf.CHAPTER_COOLDOWN_S)
+    assert sum(dormido) == mf.CHAPTER_COOLDOWN_S
+    assert all(s <= mf.COOLDOWN_STEP_S for s in dormido)
+    assert len(mensagens) == len(dormido)  # reporta a cada passo (cancelavel)
+    assert "esfriando" in mensagens[0]

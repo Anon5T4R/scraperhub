@@ -33,6 +33,8 @@ IMG_WAIT_MS = 700
 IMG_FIRST_TIMEOUT_MS = 10000
 DELAY_S = 0.3
 CHAPTER_GAP_S = 2.0
+CHAPTER_COOLDOWN_S = 60
+COOLDOWN_STEP_S = 5
 IMG_ATTEMPTS = 2
 MAX_CONSECUTIVE_FAILURES = 5
 CHALLENGE_HINTS = (
@@ -60,6 +62,17 @@ _DOWNLOAD_LOCK = threading.Lock()
 def is_challenge_html(low_html: str) -> bool:
     """True se o HTML parece uma pagina de bloqueio/challenge."""
     return any(hint in low_html for hint in CHALLENGE_HINTS)
+
+
+def cooldown(progress_cb: ProgressCb, progress: int, seconds: int) -> None:
+    """Pausa longa apos falha, em passos curtos: o progresso continua
+    reportando (e o cancelamento da tarefa e percebido na hora)."""
+    remaining = seconds
+    while remaining > 0:
+        step = min(COOLDOWN_STEP_S, remaining)
+        progress_cb(progress, f"Capitulo falhou — esfriando o site: {remaining}s ate o proximo...")
+        time.sleep(step)
+        remaining -= step
 
 ROWS_JS = """
 els => els.map(e => ({
@@ -165,6 +178,12 @@ class MangaFireScraper(Scraper):
                             "piorar um provavel bloqueio do site — espere alguns "
                             "minutos e tente de novo (os ja baixados sao pulados)."
                         )
+                    # pausa adaptativa: sitio irritado -> esfriar antes do proximo
+                    cooldown(
+                        progress_cb,
+                        int(index / total * 100),
+                        CHAPTER_COOLDOWN_S,
+                    )
                     continue
                 consecutivas = 0
                 progress_cb(
