@@ -153,6 +153,21 @@
   .assemble-table th { color: var(--muted); font-weight: 600; }
   .assemble-sources { margin: 12px 0; }
   .task { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px; }
+  .task.has-error { border-color: var(--err); }
+  .task-error {
+    color: var(--err);
+    font-size: 13px;
+    font-weight: 600;
+    background: rgba(255, 107, 107, 0.08);
+    border: 1px solid var(--err);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin: 0 0 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 180px;
+    overflow-y: auto;
+  }
   .task-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
   .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #2a303b; }
   .badge.running { background: #1d3a5c; color: #9cc4ff; }
@@ -616,7 +631,11 @@ function renderTasks(tasks) {
 }
 
 function renderTask(task) {
-  const card = el("div", { class: "task" });
+  const card = el("div", { class: "task" + (task.error ? " has-error" : "") });
+  if (task.error) {
+    // banner de falha no TOPO: o que faltou e quais, facil de achar
+    card.appendChild(el("div", { class: "task-error", text: task.error }));
+  }
   const top = el("div", { class: "task-top" });
   top.append(
     el("span", { class: `badge ${task.status}`, text: STATUS_LABEL[task.status] || task.status }),
@@ -638,7 +657,6 @@ function renderTask(task) {
   bar.appendChild(fill);
   card.append(top, bar);
   if (task.current_item) card.appendChild(el("p", { class: "muted", text: task.current_item }));
-  if (task.error) card.appendChild(el("p", { class: "error", text: task.error }));
   card.appendChild(el("pre", { class: "log", text: (task.log || []).join("\n") }));
   return card;
 }

@@ -171,12 +171,12 @@ class MangaFireScraper(Scraper):
                     consecutivas += 1
                     if consecutivas >= MAX_CONSECUTIVE_FAILURES:
                         restantes = total - index
-                        resumo = "; ".join(falhas[-MAX_CONSECUTIVE_FAILURES:])
                         raise ScraperError(
-                            f"{MAX_CONSECUTIVE_FAILURES} capitulos seguidos sem paginas "
-                            f"({resumo}). Abortados {restantes} restante(s) para nao "
-                            "piorar um provavel bloqueio do site — espere alguns "
-                            "minutos e tente de novo (os ja baixados sao pulados)."
+                            f"{MAX_CONSECUTIVE_FAILURES} capitulos SEGUIDOS sem paginas. "
+                            f"Abortados {restantes} restante(s) para nao piorar um "
+                            "provavel bloqueio do site — espere alguns minutos e tente "
+                            "de novo (os ja baixados sao pulados). "
+                            f"Capitulos que falharam ({len(falhas)}): " + "; ".join(falhas)
                         )
                     # pausa adaptativa: sitio irritado -> esfriar antes do proximo
                     cooldown(
@@ -193,9 +193,8 @@ class MangaFireScraper(Scraper):
                 if index < total:
                     time.sleep(CHAPTER_GAP_S)
             if falhas:
-                resumo = "; ".join(falhas[:10]) + (" ..." if len(falhas) > 10 else "")
                 raise ScraperError(
-                    f"{len(falhas)}/{total} capitulo(s) sem paginas ( falha: {resumo} )"
+                    f"{len(falhas)}/{total} capitulo(s) falharam: " + "; ".join(falhas)
                 )
 
     @staticmethod
