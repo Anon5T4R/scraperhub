@@ -57,12 +57,22 @@ def _ensure_chromium(pw) -> None:
 
 
 @contextmanager
-def run(headless: bool = True) -> Iterator[BrowserContext]:
-    """Soba um Chromium e entrega um contexto; fecha tudo ao sair.
+def run(
+    headless: bool = True,
+    state_path: Path | None = None,
+) -> Iterator[BrowserContext]:
+    """Sobe um Chromium e entrega um contexto; fecha tudo ao sair.
 
     No executavel (PyInstaller): usa os browsers EMBUTIDOS no exe
     (ms-playwright empacotado); se ausentes, instala em pasta persistente ao
     lado do exe na primeira execucao.
+
+    `state_path`: se informado, carrega cookies/localStorage do arquivo (se
+    existir) e regrava ao sair. Serve para reaproveitar um `cf_clearance`
+    obtido no modo assistido (headful) nos proximos contextos headless.
+
+    `headless=False` exige o Chromium COMPLETO (nao o headless shell): no exe
+    isso exige empacotar `chromium-XXXX` junto (ver README).
     """
     if getattr(sys, "frozen", False):
         bundled = _bundled_browsers()
@@ -76,14 +86,21 @@ def run(headless: bool = True) -> Iterator[BrowserContext]:
             browser = pw.chromium.launch(headless=headless)
         except Exception as exc:
             raise ScraperError(f"Nao foi possivel iniciar o Chromium: {exc}") from exc
+        storage = str(state_path) if state_path and Path(state_path).is_file() else None
         context = browser.new_context(
             user_agent=USER_AGENT,
             locale="pt-BR",
             viewport=VIEWPORT,
+            storage_state=storage,
         )
         try:
             yield context
         finally:
+            if state_path is not None:
+                try:
+                    context.storage_state(path=str(state_path))
+                except Exception:
+                    pass  # nao salvar o estado nao pode derrubar o download
             context.close()
             browser.close()
 

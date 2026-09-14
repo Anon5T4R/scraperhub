@@ -369,7 +369,11 @@ const api = {
   async request(path, options) {
     const res = await fetch(path, options);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || ("Erro " + res.status));
+    if (!res.ok) {
+      const err = new Error(data.detail || ("Erro " + res.status));
+      err.status = res.status;
+      throw err;
+    }
     return data;
   },
   post(path, body) {
@@ -479,7 +483,66 @@ async function analyzeInto(cfg) {
   } catch (err) {
     cfg.current = null;
     cfg.status.textContent = "Erro: " + err.message;
+    if (err.status === 409) renderChallenge(cfg, url, force, err.message);
   }
+}
+
+function renderChallenge(cfg, url, force, message) {
+  // painel do modo assistido: abre o navegador para o usuario resolver
+  cfg.result.replaceChildren();
+  const wrap = el("div");
+  wrap.appendChild(el("p", { class: "error", text: message }));
+  wrap.appendChild(el("p", {
+    class: "muted",
+    text: "Clique abaixo: o ScraperHub abre o navegador, voce resolve a verificacao e ele continua sozinho.",
+  }));
+  const controls = el("div", { class: "controls" });
+  const button = el("button", { text: "Resolver verificacao (abrir navegador)" });
+  button.addEventListener("click", () => solveChallenge(cfg, url, force, button));
+  controls.appendChild(button);
+  wrap.appendChild(controls);
+  cfg.result.appendChild(wrap);
+  cfg.result.classList.remove("hidden");
+}
+
+async function solveChallenge(cfg, url, force, button) {
+  button.disabled = true;
+  button.textContent = "Abrindo o navegador...";
+  setStatus(cfg, "Resolva a verificacao na janela que abriu.");
+  let taskId;
+  try {
+    const res = await api.post("/api/solve_challenge", { url, force });
+    taskId = res.task_id;
+  } catch (err) {
+    setStatus(cfg, "Erro: " + err.message);
+    button.disabled = false;
+    button.textContent = "Resolver verificacao (abrir navegador)";
+    return;
+  }
+  await pollTasks();
+  try {
+    await waitTask(taskId);
+  } catch (err) {
+    setStatus(cfg, "Erro: " + err.message);
+    button.disabled = false;
+    button.textContent = "Tentar de novo";
+    return;
+  }
+  setStatus(cfg, "Verificacao resolvida. Reanalisando...");
+  await analyzeInto(cfg);
+}
+
+async function waitTask(taskId, timeoutMs = 360000) {
+  // espera a tarefa terminar; o backend tem timeout proprio de 5 min
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const task = await api.get(`/api/tasks/${taskId}`);
+    if (task.status === "done") return;
+    if (task.status === "error") throw new Error(task.error || "Falha ao resolver a verificacao.");
+    if (task.status === "cancelled") throw new Error("Verificacao cancelada.");
+  }
+  throw new Error("Tempo esgotado esperando a verificacao.");
 }
 
 for (const cfg of ANALYZERS) {

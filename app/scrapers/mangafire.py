@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import BrowserContext, Page
 
 from . import browser
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
+from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, app_root
 from .mangafire_parse import (
     TITLE_PATH_RE,
     chapter_folder,
@@ -37,6 +37,12 @@ CHAPTER_COOLDOWN_S = 60
 COOLDOWN_STEP_S = 5
 IMG_ATTEMPTS = 2
 MAX_CONSECUTIVE_FAILURES = 5
+# Modo assistido: tempo maximo esperando o usuario resolver o challenge, e
+# intervalo de verificacao (tambem serve de batida do cancelamento).
+CHALLENGE_WAIT_S = 300
+CHALLENGE_POLL_MS = 1500
+# Cookies (cf_clearance) salvos aqui e reaproveitados nos proximos contextos.
+STATE_PATH = app_root() / "mangafire-state.json"
 CHALLENGE_HINTS = (
     "challenge-form",
     "cf-challenge",
@@ -53,6 +59,15 @@ CHALLENGE_HINTS = (
 class SiteBlocked(ScraperError):
     """O site pediu verificacao humana (CAPTCHA): abortar sem retry."""
 
+    challenge = True
+
+
+CAPTCHA_MESSAGE = (
+    "Site pediu verificacao humana (CAPTCHA). Use 'Resolver verificacao' "
+    "para abrir a janela e resolver, ou espere alguns minutos e tente de "
+    "novo — o ScraperHub nao burla CAPTCHA. Os capitulos ja baixados sao "
+    "pulados no retry."
+)
 
 # Um download mangafire por vez: duas tarefas simultaneas no mesmo site
 # disparam o bloqueio anti-bot (Turnstile) rapidamente.
@@ -62,6 +77,16 @@ _DOWNLOAD_LOCK = threading.Lock()
 def is_challenge_html(low_html: str) -> bool:
     """True se o HTML parece uma pagina de bloqueio/challenge."""
     return any(hint in low_html for hint in CHALLENGE_HINTS)
+
+
+def is_challenge_page(url: str, low_html: str) -> bool:
+    """True se a pagina atual e um challenge do Cloudflare/Turnstile.
+
+    O Cloudflare redireciona a navegacao para '/@waf/challenge': esse sinal
+    na URL e mais rapido e confiavel que inspecionar o HTML, que so aparece
+    depois do redirect. Cobre tambem a pagina de challenge ja renderizada.
+    """
+    return "/@waf/" in (url or "") or is_challenge_html(low_html or "")
 
 
 def cooldown(progress_cb: ProgressCb, progress: int, seconds: int) -> None:
@@ -95,6 +120,7 @@ class MangaFireScraper(Scraper):
     id = "mangafire"
     label = "MangaFire"
     kind = "manga"
+    supports_challenge = True
 
     def match(self, url: str) -> bool:
         parsed = urlparse(url)
@@ -105,12 +131,51 @@ class MangaFireScraper(Scraper):
         return bool(TITLE_PATH_RE.match(path)) or "/chapter/" in path
 
     def get_info(self, url: str) -> dict:
-        with browser.run() as context:
+        with browser.run(state_path=STATE_PATH) as context:
             page = self._new_page(context)
             try:
                 return self._read_info(page, url)
             finally:
                 page.close()
+
+    def solve_challenge(self, url: str, progress_cb: ProgressCb) -> None:
+        """Abre o Chromium headful para o usuario resolver o challenge.
+
+        E o humano que resolve (o ScraperHub nao burla CAPTCHA). Os cookies
+        resultantes (cf_clearance) sao salvos em STATE_PATH e reaproveitados
+        pelos proximos contextos headless (get_info/download).
+        """
+        title_url = parse_title_url(url)
+        with browser.run(headless=False, state_path=STATE_PATH) as context:
+            page = self._new_page(context)
+            try:
+                self._await_human(page, title_url, progress_cb)
+            finally:
+                page.close()
+
+    def _await_human(self, page: Page, title_url: str, progress_cb: ProgressCb) -> None:
+        """Navega ate o titulo e espera o usuario resolver o challenge."""
+        page.goto(title_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        if not is_challenge_page(page.url, page.content().lower()):
+            progress_cb(100, "Nenhuma verificacao pendente. Tente analisar de novo.")
+            return
+        progress_cb(0, "Resolva a verificacao na janela do navegador que abriu...")
+        deadline = time.monotonic() + CHALLENGE_WAIT_S
+        while time.monotonic() < deadline:
+            page.wait_for_timeout(CHALLENGE_POLL_MS)
+            try:
+                livre = not is_challenge_page(page.url, page.content().lower())
+                if livre and page.query_selector(TITLE_ROW_SELECTOR):
+                    progress_cb(100, "Verificacao concluida. Tente analisar de novo.")
+                    return
+            except Exception:  # noqa: BLE001 - pagina navegando: reavalia no proximo tick
+                continue
+            # batida do progresso: tambem detecta cancelamento da tarefa
+            restante = int(deadline - time.monotonic())
+            progress_cb(0, f"Aguardando a verificacao humana... ({restante}s)")
+        raise ScraperError(
+            "Tempo esgotado esperando a verificacao humana. Tente de novo."
+        )
 
     def download(
         self,
@@ -133,7 +198,7 @@ class MangaFireScraper(Scraper):
         progress_cb: ProgressCb,
         options: dict,
     ) -> None:
-        with browser.run() as context:
+        with browser.run(state_path=STATE_PATH) as context:
             page = self._new_page(context)
             try:
                 info = self._read_info(page, title_url)
@@ -207,13 +272,21 @@ class MangaFireScraper(Scraper):
         title_url = parse_title_url(url)
         try:
             page.goto(title_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+            if is_challenge_page(page.url, page.content().lower()):
+                # falhar rapido: esperar o seletor de capitulos num challenge
+                # so gera um timeout generico e enganoso
+                raise SiteBlocked(CAPTCHA_MESSAGE)
             page.wait_for_selector("h1", timeout=INFO_TIMEOUT_MS)
             page.wait_for_selector(TITLE_ROW_SELECTOR, timeout=INFO_TIMEOUT_MS)
             title = (page.inner_text("h1") or "").strip()
             cover_el = page.query_selector('meta[property="og:image"]') or page.query_selector("img.poster, .poster img")
             cover = cover_el.get_attribute("content") if cover_el and cover_el.get_attribute("content") else None
             rows = self._all_chapter_rows(page)
+        except SiteBlocked:
+            raise
         except Exception as exc:
+            if is_challenge_page(page.url, page.content().lower()):
+                raise SiteBlocked(CAPTCHA_MESSAGE) from exc
             raise ScraperError(f"Falha ao ler a pagina do manga: {exc}") from exc
         items = self._items(rows)
         if not items:
@@ -342,21 +415,14 @@ class MangaFireScraper(Scraper):
         try:
             page.wait_for_selector(CHAPTER_IMG_SELECTOR, timeout=IMG_FIRST_TIMEOUT_MS)
         except Exception:
-            if is_challenge_html(page.content().lower()):
-                raise SiteBlocked(
-                    "Site pediu verificacao humana (CAPTCHA). Cancele, espere "
-                    "alguns minutos e tente de novo — o ScraperHub nao burla "
-                    "CAPTCHA. Os capitulos ja baixados sao pulados no retry."
-                )
+            if is_challenge_page(page.url, page.content().lower()):
+                raise SiteBlocked(CAPTCHA_MESSAGE)
             # sem imagens em IMG_FIRST_TIMEOUT_MS: segue para o scroll,
             # que cobre readers lentos/lazy
         browser.scroll_until_stable(page, CHAPTER_IMG_SELECTOR, IMG_MAX_ITER, IMG_WAIT_MS)
         images = self._chapter_images(page)
-        if not images and is_challenge_html(page.content().lower()):
-            raise SiteBlocked(
-                "Site pediu verificacao humana (CAPTCHA). Cancele, espere "
-                "alguns minutos e tente de novo."
-            )
+        if not images and is_challenge_page(page.url, page.content().lower()):
+            raise SiteBlocked(CAPTCHA_MESSAGE)
         return images
 
     @staticmethod

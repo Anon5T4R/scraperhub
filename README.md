@@ -35,7 +35,7 @@ baixar o navegador usado pelo scraper de manga.
   Downloads MangaFire rodam UM POR VEZ (lock) com pausa entre capitulos: o
   site bloqueia com CAPTCHA (Turnstile) sob acesso concorrente/rapido — o
   ScraperHub detecta o bloqueio, aborta com aviso claro e NAO burla CAPTCHA;
-  capitulos ja baixados sao pulados ao tentar de novo. O rotulo do capitulo
+  capitulos ja baixados sao pulados ao tentar de novo. Quando o Cloudflare exige verificacao humana (challenge), o scraper nao burla o CAPTCHA: o painel do manga oferece o botao "Resolver verificacao", que abre uma janela do Chromium para VOCE resolver; os cookies resultantes (cf_clearance) sao salvos em mangafire-state.json (ignorado pelo git) e reaproveitados no info e nos downloads seguintes. O rotulo do capitulo
   inclui o idioma (`[English]` etc): o mesmo numero existe em varias linguas.
 - **Manga WordPress** (`wpmanga`): sites WordPress server-rendered cuja home
   lista capitulos como links `/manga/{slug}-chapter-N` (ex:
@@ -104,6 +104,7 @@ automatica.
   --add-data "web;web" `
   --add-binary "ffmpeg.exe;." `
   --add-data "$env:LOCALAPPDATA\ms-playwright\chromium_headless_shell-1234;ms-playwright/chromium_headless_shell-1234" `
+  --add-data "$env:LOCALAPPDATA\ms-playwright\chromium-1234;ms-playwright/chromium-1234" `
   --collect-all gallery_dl --collect-all gdown run.py
 ```
 
@@ -122,6 +123,7 @@ NOTAS:
   e ajuste o comando.
 - Sem rede nenhuma no build: o exe ainda baixa o Chromium/ffmpeg sozinho na
   primeira execucao, se faltarem no pacote (fallback do codigo).
+- O modo assistido de CAPTCHA precisa do Chromium COMPLETO (chromium-XXXX) — por isso ele tambem vai no empacotamento. Isso aumenta o exe (~+150MB). Sem ele, so o modo headless funciona.
 
 ## Release
 

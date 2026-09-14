@@ -25,7 +25,14 @@ USER_AGENT = (
 
 
 class ScraperError(Exception):
-    """Erro tipado levantado por um scraper, com mensagem amigavel."""
+    """Erro tipado levantado por um scraper, com mensagem amigavel.
+
+    `challenge=True` sinaliza que o site exigiu verificacao humana: a UI pode
+    oferecer o modo assistido (abrir uma janela para o usuario resolver) em
+    vez de so mostrar o erro.
+    """
+
+    challenge: bool = False
 
 
 class TaskCancelled(Exception):
@@ -38,10 +45,18 @@ class Scraper:
     id: str = "base"
     label: str = "Base"
     kind: Kind = "video"
+    supports_challenge: bool = False
 
     def match(self, url: str) -> bool:
         """Retorna True se este scraper aceita a URL informada."""
         raise NotImplementedError
+
+    def solve_challenge(self, url: str, progress_cb: ProgressCb) -> None:
+        """Abre uma janela para o usuario resolver a verificacao humana.
+
+        Scrapers que nao exigem intervencao humana (o padrao) recusam.
+        """
+        raise ScraperError("Este scraper nao requer verificacao humana.")
 
     def get_info(self, url: str) -> dict:
         """Retorna metadados (title, cover) e a lista de itens disponiveis."""

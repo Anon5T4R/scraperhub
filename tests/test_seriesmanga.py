@@ -112,6 +112,18 @@ def test_detecta_challenge_turnstile():
     assert not is_challenge_html("<div>reader with img.reader-img pages</div>")
 
 
+def test_detecta_challenge_pela_url_do_waf():
+    from app.scrapers.mangafire import is_challenge_page
+
+    # o Cloudflare redireciona a navegacao para /@waf/challenge
+    url = "https://mangafire.to/@waf/challenge?return=%2Ftitle%2Fsurviving-the-game-as-a-barbarian"
+    assert is_challenge_page(url, "")
+    # challenge ja renderizado, mesmo sem o redirect na URL
+    assert is_challenge_page("https://mangafire.to/title/x", "just a moment...")
+    # pagina normal de titulo
+    assert not is_challenge_page("https://mangafire.to/title/x", "<h1>Manga</h1>")
+
+
 def test_items_label_inclui_idioma():
     from app.scrapers.mangafire import MangaFireScraper
 

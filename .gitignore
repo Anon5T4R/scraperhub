@@ -12,3 +12,4 @@ ffmpeg.exe
 *.zip
 sites.txt
 ScraperHub.spec
+*-state.json

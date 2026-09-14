@@ -33,7 +33,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.8.4")
+app = FastAPI(title="ScraperHub", version="1.8.5")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
@@ -171,7 +171,15 @@ def _resolve(url: str, force: str | None = None) -> tuple[Scraper, str]:
 @app.get("/api/scrapers")
 def api_scrapers() -> list[dict]:
     """Lista os scrapers disponiveis (id, label, kind) para os selects da UI."""
-    return [{"id": s.id, "label": s.label, "kind": s.kind} for s in REGISTRY]
+    return [
+        {
+            "id": s.id,
+            "label": s.label,
+            "kind": s.kind,
+            "supports_challenge": s.supports_challenge,
+        }
+        for s in REGISTRY
+    ]
 
 
 @app.post("/api/detect")
@@ -183,12 +191,17 @@ def api_detect(payload: UrlRequest) -> dict:
 
 @app.post("/api/info")
 def api_info(payload: UrlRequest) -> dict:
-    """Retorna metadados e itens do conteudo da URL."""
+    """Retorna metadados e itens do conteudo da URL.
+
+    Quando o site exige verificacao humana (challenge), devolve 409 com a
+    mensagem: a UI oferece o modo assistido (/api/solve_challenge).
+    """
     scraper, url = _resolve(payload.url, payload.force)
     try:
         info = scraper.get_info(url)
     except ScraperError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        status = 409 if getattr(exc, "challenge", False) else 502
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
     return {"scraper_id": scraper.id, "kind": scraper.kind, "label": scraper.label, **info}
 
 
@@ -214,6 +227,19 @@ def _create_download_task(payload: DownloadRequest) -> str:
 
     def run(task_id: str) -> None:
         scraper.download(url, payload.items, _progress_reporter(task_id), payload.options)
+
+    return manager.create(run, retry=retry)
+
+
+def _create_solve_task(payload: UrlRequest) -> str:
+    """Cria a tarefa do modo assistido (usada pelo endpoint e pelo retry)."""
+    scraper, url = _resolve(payload.url, payload.force)
+    if not getattr(scraper, "supports_challenge", False):
+        raise HTTPException(status_code=400, detail="Este scraper nao requer verificacao humana.")
+    retry = {"kind": "solve_challenge", "url": payload.url, "force": payload.force}
+
+    def run(task_id: str) -> None:
+        scraper.solve_challenge(url, _progress_reporter(task_id))
 
     return manager.create(run, retry=retry)
 
@@ -250,6 +276,12 @@ def _create_assemble_task(payload: AssembleDownloadRequest, full: bool) -> str:
 def api_download(payload: DownloadRequest) -> dict:
     """Cria uma tarefa de download em background e retorna o id."""
     return {"task_id": _create_download_task(payload)}
+
+
+@app.post("/api/solve_challenge")
+def api_solve_challenge(payload: UrlRequest) -> dict:
+    """Cria a tarefa do modo assistido (abre a janela para resolver o CAPTCHA)."""
+    return {"task_id": _create_solve_task(payload)}
 
 
 @app.get("/api/tasks")
@@ -386,6 +418,8 @@ def api_task_retry(task_id: str) -> dict:
             force=retry.get("force"),
         )
         return {"task_id": _create_download_task(payload)}
+    if kind == "solve_challenge":
+        return {"task_id": _create_solve_task(UrlRequest(url=retry["url"], force=retry.get("force")))}
     if kind in ("assemble", "assemble_full"):
         payload = AssembleDownloadRequest(
             term=retry.get("term") or "",
