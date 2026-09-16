@@ -4,6 +4,7 @@ from __future__ import annotations
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 from urllib.parse import urlparse
 
 from playwright.sync_api import BrowserContext, Page
@@ -12,13 +13,15 @@ from . import browser
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, app_root
 from .mangafire_parse import (
     TITLE_PATH_RE,
-    chapter_folder,
     chapter_label,
+    chapter_number,
     image_extension,
     make_cbz,
+    numbered_folder,
     order_items,
     parse_chapter_id,
     parse_title_url,
+    parse_volume_id,
     sanitize,
     select_ascending,
 )
@@ -26,16 +29,23 @@ from .mangafire_state import (
     folder_pages,
     is_complete,
     load_state,
+    migrate_entries,
     record_done,
     save_state,
 )
 
 TITLE_ROW_SELECTOR = "a.title-detail__row-link"
+TAB_SELECTOR = "button.title-detail__tab"
 CHAPTER_IMG_SELECTOR = "img.reader-img"
 INFO_TIMEOUT_MS = 30000
 NAV_TIMEOUT_MS = 45000
 LIST_WAIT_MS = 1200
 IMG_MAX_ITER = 60
+# o reader de volume lazy-carrega MUITO mais paginas que o de capitulo
+# Varredura do swiper de volume: espera por passo de slide e passos sem
+# pagina nova antes de declarar o fim da coleta.
+IMG_STEP_WAIT_MS = 250
+VOLUME_STALE_STEPS = 4
 IMG_WAIT_MS = 700
 IMG_FIRST_TIMEOUT_MS = 10000
 DELAY_S = 0.3
@@ -44,6 +54,9 @@ CHAPTER_COOLDOWN_S = 60
 COOLDOWN_STEP_S = 5
 IMG_ATTEMPTS = 2
 MAX_CONSECUTIVE_FAILURES = 5
+# Itens de volume chegam da UI com este prefixo no id ("vol:{id}"); o resto
+# da lista e capitulo.
+VOLUME_PREFIX = "vol:"
 # Modo assistido: tempo maximo esperando o usuario resolver o challenge, e
 # intervalo de verificacao (tambem serve de batida do cancelamento).
 CHALLENGE_WAIT_S = 300
@@ -106,6 +119,12 @@ def cooldown(progress_cb: ProgressCb, progress: int, seconds: int) -> None:
         time.sleep(step)
         remaining -= step
 
+
+def item_noun(kind: str) -> str:
+    """Rotulo do item (capitulo/volume) nas mensagens de progresso."""
+    return "Volume" if kind == "volume" else "Capitulo"
+
+
 ROWS_JS = """
 els => els.map(e => ({
     href: e.getAttribute('href') || '',
@@ -135,7 +154,7 @@ class MangaFireScraper(Scraper):
         if "mangafire" in host:
             return True
         path = parsed.path or ""
-        return bool(TITLE_PATH_RE.match(path)) or "/chapter/" in path
+        return bool(TITLE_PATH_RE.match(path)) or "/chapter/" in path or "/volume/" in path
 
     def get_info(self, url: str) -> dict:
         with browser.run(state_path=STATE_PATH) as context:
@@ -205,6 +224,11 @@ class MangaFireScraper(Scraper):
         progress_cb: ProgressCb,
         options: dict,
     ) -> None:
+        # a UI manda ids de capitulo (puros) e de volume ("vol:{id}") na mesma
+        # lista: separa para montar a fila com capitulos primeiro
+        pedidos = [str(item_id) for item_id in item_ids]
+        chapter_ids = [item_id for item_id in pedidos if not item_id.startswith(VOLUME_PREFIX)]
+        volume_ids = [item_id for item_id in pedidos if item_id.startswith(VOLUME_PREFIX)]
         with browser.run(state_path=STATE_PATH) as context:
             page = self._new_page(context)
             try:
@@ -212,54 +236,72 @@ class MangaFireScraper(Scraper):
             finally:
                 page.close()
             title = sanitize(str(info["title"]))
-            ordered = select_ascending(info["items"], item_ids)
-            if not ordered:
-                raise ScraperError("Nenhum capitulo valido foi selecionado.")
+            chapters = select_ascending(info["items"], chapter_ids)
+            volumes = select_ascending(info.get("volumes") or [], volume_ids)
+            if not chapters and not volumes:
+                raise ScraperError("Nenhum capitulo ou volume valido foi selecionado.")
             base = DOWNLOADS_DIR / title
             state = load_state(base)
-            total = len(ordered)
+            # nomes antigos usavam o indice da selecao (mudava entre rodadas):
+            # renomeia para o numero real ANTES de decidir o que pular
+            labels = {
+                str(item["id"]): str(item["label"])
+                for item in list(info["items"]) + list(info.get("volumes") or [])
+            }
+            if migrate_entries(base, state, lambda item_id: base / numbered_folder(labels[item_id])):
+                save_state(base, state)
+            jobs: list[tuple[str, dict]] = [("chapter", item) for item in chapters]
+            jobs += [("volume", item) for item in volumes]
+            total = len(jobs)
             falhas: list[str] = []
             consecutivas = 0
-            for index, item in enumerate(ordered, start=1):
-                chapter_id = str(item["id"])
+            for index, (kind, item) in enumerate(jobs, start=1):
+                item_id = str(item["id"])
                 label = str(item["label"])
-                folder = base / chapter_folder(index, label)
-                if is_complete(state, chapter_id, folder):
+                section = "volumes" if kind == "volume" else "chapters"
+                noun = item_noun(kind)
+                folder = base / numbered_folder(label)
+                if is_complete(state, item_id, folder, section):
                     # ja baixado: pula SEM abrir a pagina (retomada sem rede)
                     progress_cb(
                         int(index / total * 100),
-                        f"Capitulo {label} ja baixado, pulando",
+                        f"{noun} {label} ja baixado, pulando",
                     )
                     continue
                 progress_cb(
                     int((index - 1) / total * 100),
-                    f"Iniciando capitulo {label} ({index}/{total})",
+                    f"Iniciando {noun.lower()} {label} ({index}/{total})",
                 )
-                chapter_page = self._new_page(context)
+                if kind == "volume":
+                    target_url = f"{title_url}/volume/{item_id[len(VOLUME_PREFIX):]}"
+                else:
+                    target_url = f"{title_url}/chapter/{item_id}"
+                item_page = self._new_page(context)
                 try:
-                    falha = self._download_chapter(
-                        chapter_page,
-                        title_url,
+                    falha = self._download_item(
+                        item_page,
                         folder,
                         index,
                         item,
                         progress_cb,
                         options,
                         total,
+                        target_url,
+                        kind,
                     )
                 finally:
-                    chapter_page.close()
+                    item_page.close()
                 if falha:
                     falhas.append(falha)
                     consecutivas += 1
                     if consecutivas >= MAX_CONSECUTIVE_FAILURES:
                         restantes = total - index
                         raise ScraperError(
-                            f"{MAX_CONSECUTIVE_FAILURES} capitulos SEGUIDOS sem paginas. "
+                            f"{MAX_CONSECUTIVE_FAILURES} itens SEGUIDOS sem paginas. "
                             f"Abortados {restantes} restante(s) para nao piorar um "
                             "provavel bloqueio do site — espere alguns minutos e tente "
                             "de novo (os ja baixados sao pulados). "
-                            f"Capitulos que falharam ({len(falhas)}): " + "; ".join(falhas)
+                            f"Itens que falharam ({len(falhas)}): " + "; ".join(falhas)
                         )
                     # pausa adaptativa: sitio irritado -> esfriar antes do proximo
                     cooldown(
@@ -269,17 +311,17 @@ class MangaFireScraper(Scraper):
                     )
                     continue
                 consecutivas = 0
-                record_done(state, chapter_id, folder)
+                record_done(state, item_id, folder, section)
                 save_state(base, state)
                 progress_cb(
                     int(index / total * 100),
-                    f"Concluido capitulo {label} ({index}/{total})",
+                    f"Concluido {noun.lower()} {label} ({index}/{total})",
                 )
                 if index < total:
                     time.sleep(CHAPTER_GAP_S)
             if falhas:
                 raise ScraperError(
-                    f"{len(falhas)}/{total} capitulo(s) falharam: " + "; ".join(falhas)
+                    f"{len(falhas)}/{total} item(ns) falharam: " + "; ".join(falhas)
                 )
 
     @staticmethod
@@ -302,6 +344,7 @@ class MangaFireScraper(Scraper):
             cover_el = page.query_selector('meta[property="og:image"]') or page.query_selector("img.poster, .poster img")
             cover = cover_el.get_attribute("content") if cover_el and cover_el.get_attribute("content") else None
             rows = self._all_chapter_rows(page)
+            volumes = self._read_volumes(page)
         except SiteBlocked:
             raise
         except Exception as exc:
@@ -311,10 +354,58 @@ class MangaFireScraper(Scraper):
         items = self._items(rows)
         if not items:
             raise ScraperError("Nenhum capitulo encontrado nesta pagina.")
-        return {"title": title or "Manga sem titulo", "cover": cover, "items": items}
+        return {
+            "title": title or "Manga sem titulo",
+            "cover": cover,
+            "items": items,
+            "volumes": volumes,
+        }
 
-    def _all_chapter_rows(self, page: Page) -> list[dict]:
-        """Coleta os capitulos de TODAS as paginas do npager (20 por pagina).
+    def _read_volumes(self, page: Page) -> list[dict]:
+        """Le a aba Volumes do toggle (mesma lista paginada dos capitulos).
+
+        Os volumes sao opcionais: qualquer problema nessa aba NAO pode derrubar
+        a listagem de capitulos, entao a falha vira lista vazia. Ao final o
+        toggle volta para Chapters (higiene; a pagina e fechada logo depois).
+        """
+        if not self._click_tab(page, "Volumes"):
+            return []
+        try:
+            volume_rows = self._all_chapter_rows(page, parse_volume_id)
+        except Exception:  # noqa: BLE001 - aba opcional: capitulos ja bastam
+            volume_rows = []
+        self._click_tab(page, "Chapters")
+        return self._volume_items(volume_rows)
+
+    @staticmethod
+    def _click_tab(page: Page, text: str) -> bool:
+        """Clica no toggle Chapters/Volumes pelo texto; False se nao existir.
+
+        O click e despachado via JS: overlays de anuncio do site interceptam
+        pointer events e fazem o click nativo do Playwright estourar timeout.
+        """
+        return bool(
+            page.evaluate(
+                """(texto) => {
+                    const els = Array.from(document.querySelectorAll('.title-detail__tab'));
+                    const alvo = els.find(e => (e.innerText || '').trim().toLowerCase() === texto.toLowerCase());
+                    if (!alvo) { return false; }
+                    alvo.click();
+                    return true;
+                }""",
+                text,
+            )
+        )
+
+    def _all_chapter_rows(
+        self,
+        page: Page,
+        id_parser: Callable[[str], str | None] = parse_chapter_id,
+    ) -> list[dict]:
+        """Coleta as rows de TODAS as paginas do npager (20 por pagina).
+
+        Serve para capitulos e volumes: a aba Volumes usa a mesma lista
+        paginada, e o `id_parser` decide qual id extrair do href.
 
         A lista usa botoes de paginacao (npager__num), entao o scroll nao
         carrega mais nada: e preciso clicar na proxima pagina. Com ellipsis
@@ -326,9 +417,9 @@ class MangaFireScraper(Scraper):
         while True:
             page.wait_for_timeout(LIST_WAIT_MS)
             for row in page.eval_on_selector_all(TITLE_ROW_SELECTOR, ROWS_JS):
-                chapter_id = parse_chapter_id(str(row.get("href") or ""))
-                if chapter_id and chapter_id not in seen:
-                    seen.add(chapter_id)
+                row_id = id_parser(str(row.get("href") or ""))
+                if row_id and row_id not in seen:
+                    seen.add(row_id)
                     all_rows.append(row)
             clicked = page.evaluate(
                 """() => {
@@ -373,31 +464,66 @@ class MangaFireScraper(Scraper):
             )
         return order_items(items)
 
-    def _download_chapter(
+    @staticmethod
+    def _volume_items(rows: list[dict]) -> list[dict]:
+        """Monta os itens de volume a partir das rows da aba Volumes.
+
+        O rotulo nao usa o sub (ele traz "N chapters", a contagem de
+        capitulos) — o numero vem do proprio "Vol. N" e a contagem vira o
+        campo `count` (a UI mostra "Vol. N — M capitulos").
+        """
+        items: list[dict] = []
+        seen: set[str] = set()
+        for row in rows:
+            volume_id = parse_volume_id(str(row.get("href") or ""))
+            if not volume_id or volume_id in seen:
+                continue
+            seen.add(volume_id)
+            numero = str(row.get("num") or "").strip() or "Volume"
+            flag = str(row.get("flag") or "")
+            if flag:
+                # mesmo volume em varios idiomas: sem a flag o usuario nao sabe
+                # qual esta baixando
+                label = f"{numero} [{flag}]"
+            else:
+                label = numero
+            count = chapter_number(str(row.get("sub") or ""))
+            items.append(
+                {
+                    "id": f"{VOLUME_PREFIX}{volume_id}",
+                    "label": label,
+                    "flag": flag,
+                    "count": int(count) if count else 0,
+                }
+            )
+        return order_items(items)
+
+    def _download_item(
         self,
         page: Page,
-        title_url: str,
         folder: Path,
         index: int,
         item: dict,
         progress_cb: ProgressCb,
         options: dict,
         total: int,
+        target_url: str,
+        kind: str,
     ) -> str | None:
-        """Baixa um capitulo; retorna motivo de falha ou None se ok.
+        """Baixa um capitulo ou volume; retorna motivo de falha ou None se ok.
 
         O skip local (manifesto) e feito antes, em `_download_all`. Aqui
         permanece o skip por rede para bibliotecas ANTIGAS (sem manifesto):
-        na primeira passada ele detecta o capitulo completo, pula e o
-        manifesto e gravado — as retomadas seguintes ja nao tocam a rede.
+        na primeira passada ele detecta o item completo, pula e o manifesto e
+        gravado — as retomadas seguintes ja nao tocam a rede.
         """
         label = str(item["label"])
-        chapter_url = f"{title_url}/chapter/{item['id']}"
+        noun = item_noun(kind)
         images: list[str] = []
         last_error: Exception | None = None
         for attempt in range(1, IMG_ATTEMPTS + 1):
             try:
-                images = self._load_chapter_images(page, chapter_url)
+                images = self._load_item_images(page, target_url, kind)
             except SiteBlocked:
                 raise  # CAPTCHA: retry so piora o bloqueio
             except Exception as exc:  # navegacao/timeout: uma retentativa
@@ -415,7 +541,7 @@ class MangaFireScraper(Scraper):
             progress_cb(int((index - 1) / total * 100), f"Falhou {motivo}")
             return motivo
         if folder_pages(folder) == len(images):
-            progress_cb(int((index - 1) / total * 100), f"Capitulo {label} ja baixado, pulando")
+            progress_cb(int((index - 1) / total * 100), f"{noun} {label} ja baixado, pulando")
             return None
         folder.mkdir(parents=True, exist_ok=True)
         for position, image_url in enumerate(images, start=1):
@@ -423,32 +549,70 @@ class MangaFireScraper(Scraper):
             extension = image_extension(image_url, data)
             (folder / f"{position:03d}{extension}").write_bytes(data)
             percent = int(((index - 1) + position / len(images)) / total * 100)
-            progress_cb(percent, f"Cap {label}/pg {position}")
+            progress_cb(percent, f"{noun[:3]} {label}/pg {position}")
             time.sleep(DELAY_S)
         if options.get("cbz"):
             make_cbz(folder)
         return None
 
-    def _load_chapter_images(self, page: Page, chapter_url: str) -> list[str]:
-        """Abre a pagina do capitulo e coleta as imagens do reader.
+    def _load_item_images(self, page: Page, target_url: str, kind: str = "chapter") -> list[str]:
+        """Abre a pagina do capitulo/volume e coleta as imagens do reader.
+
+        O reader do volume nao rola: e um swiper horizontal que so renderiza
+        os slides proximos da posicao atual (lazy-load) e abre no FIM do
+        volume (posicao de leitura salva no site). Entao o volume e coletado
+        navegando com setas do teclado do primeiro ao ultimo slide.
 
         Levanta SiteBlocked imediatamente se a pagina for um challenge do
-        Cloudflare/Turnstile (martelar os proximos capitulos so piora o
-        bloqueio e o CAPTCHA nao e burlado).
+        Cloudflare/Turnstile (martelar os proximos itens so piora o bloqueio e
+        o CAPTCHA nao e burlado).
         """
-        page.goto(chapter_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        page.goto(target_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
         try:
             page.wait_for_selector(CHAPTER_IMG_SELECTOR, timeout=IMG_FIRST_TIMEOUT_MS)
         except Exception:
             if is_challenge_page(page.url, page.content().lower()):
                 raise SiteBlocked(CAPTCHA_MESSAGE)
-            # sem imagens em IMG_FIRST_TIMEOUT_MS: segue para o scroll,
+            # sem imagens em IMG_FIRST_TIMEOUT_MS: segue para o scroll/navegacao,
             # que cobre readers lentos/lazy
-        browser.scroll_until_stable(page, CHAPTER_IMG_SELECTOR, IMG_MAX_ITER, IMG_WAIT_MS)
-        images = self._chapter_images(page)
+        if kind == "volume":
+            images = self._sweep_volume_images(page)
+        else:
+            browser.scroll_until_stable(page, CHAPTER_IMG_SELECTOR, IMG_MAX_ITER, IMG_WAIT_MS)
+            images = self._chapter_images(page)
         if not images and is_challenge_page(page.url, page.content().lower()):
             raise SiteBlocked(CAPTCHA_MESSAGE)
         return images
+
+    def _sweep_volume_images(self, page: Page) -> list[str]:
+        """Varre o swiper do volume do primeiro ao ultimo slide, coletando.
+
+        O swiper mantem todos os slides no DOM, mas so instancia as imgs
+        proximas da posicao ativa. Setas avancam o slide e disparam o
+        lazy-load; coleta para de crescer por VOLUME_STALE_STEPS passos.
+        """
+        slides = page.eval_on_selector_all(".swiper-slide", "els => els.length")
+        if not slides:
+            return []
+        # volta para o inicio (o reader abre onde o usuario parou: no fim)
+        for _ in range(slides + 5):
+            page.keyboard.press("ArrowLeft")
+        coletadas: list[str] = []
+        seen: set[str] = set()
+        sem_novo = 0
+        for _ in range(slides * 2 + 10):
+            page.wait_for_timeout(IMG_STEP_WAIT_MS)
+            novas = [url for url in self._chapter_images(page) if url not in seen]
+            if novas:
+                seen.update(novas)
+                coletadas.extend(novas)
+                sem_novo = 0
+            else:
+                sem_novo += 1
+                if sem_novo >= VOLUME_STALE_STEPS:
+                    break
+            page.keyboard.press("ArrowRight")
+        return coletadas
 
     @staticmethod
     def _chapter_images(page: Page) -> list[str]:

@@ -137,6 +137,33 @@ def test_items_label_inclui_idioma():
     assert labels == ["Ch. 49 [English]", "Ch. 49"]
 
 
+def test_match_aceita_volume():
+    from app.scrapers.mangafire import MangaFireScraper
+
+    scraper = MangaFireScraper()
+    # host sem "mangafire": cai na regra de path
+    assert scraper.match("https://clone.to/title/x/volume/78")
+    assert scraper.match("https://clone.to/title/x/chapter/78")
+    assert not scraper.match("https://clone.to/outro/path")
+
+
+def test_volume_items_monta_label_contagem_e_id():
+    from app.scrapers.mangafire import MangaFireScraper
+
+    rows = [
+        {"href": "/title/x/volume/78", "num": "Vol. 28", "sub": "28 chapters", "flag": "English"},
+        {"href": "/title/x/volume/77", "num": "Vol. 27", "sub": "10 chapters", "flag": ""},
+        {"href": "/title/x/volume/78", "num": "Vol. 28", "sub": "28 chapters", "flag": "English"},  # dup
+        {"href": "/title/x/chapter/9", "num": "Ch. 9", "sub": "", "flag": ""},  # nao e volume
+    ]
+    items = MangaFireScraper._volume_items(rows)
+    assert [i["id"] for i in items] == ["vol:78", "vol:77"]  # mais novo primeiro
+    assert items[0]["label"] == "Vol. 28 [English]"
+    assert items[0]["count"] == 28
+    assert items[1]["label"] == "Vol. 27"
+    assert items[1]["count"] == 10
+
+
 def test_cooldown_reporta_e_dorme_em_passos(monkeypatch):
     import app.scrapers.mangafire as mf
 

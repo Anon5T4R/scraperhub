@@ -325,6 +325,7 @@
       <p id="status-manga" class="muted" style="margin:10px 0 0"></p>
     </section>
     <section id="result-manga" class="card hidden"></section>
+    <p id="manga-meta" class="muted hidden"></p>
   </section>
 
   <!-- Video -->
@@ -615,23 +616,25 @@ function renderGeneric(info, kind, cfg) {
 function renderManga(info, cfg) {
   return renderSelectableList(info, [
     { id: "cbz", label: "Empacotar em CBZ" },
-  ], "capitulo", cfg);
+  ], "capitulo", cfg, info.volumes);
 }
 
-// Lista com checkboxes + "Selecionar todos" (manga, episodios etc.)
-function renderSelectableList(info, options, unit, cfg) {
+// Lista com checkboxes + selecao em massa (manga, episodios etc.)
+// quando info.volumes vier preenchido, mostra o toggle Capitulos | Volumes
+function renderSelectableList(info, options, unit, cfg, volumes) {
   const wrap = el("div");
   const filter = el("input", { attrs: { type: "text", placeholder: "Filtrar..." } });
   filter.style.marginBottom = "8px";
-  const rangeWrap = el("div", { class: "row", style: "margin-bottom:8px" });
-  const from = el("input", { attrs: { type: "number", min: "1", placeholder: "De" } });
-  const to = el("input", { attrs: { type: "number", min: "1", placeholder: "Ate" } });
+
+  const rangeInput = el("input", { attrs: { type: "text", placeholder: "ex: 108-255", style: "max-width:180px" } });
   const rangeBtn = el("button", { class: "ghost", text: "Selecionar faixa" });
-  rangeWrap.append(el("span", { class: "muted", text: "Faixa:" }), from, to, rangeBtn);
+  const allBtn = el("button", { class: "ghost", text: "Todos" });
+  const noneBtn = el("button", { class: "ghost", text: "Nenhum" });
+  const invertBtn = el("button", { class: "ghost", text: "Inverter" });
+  const rangeWrap = el("div", { class: "controls" });
+  rangeWrap.append(el("span", { class: "muted", text: "Faixa:" }), rangeInput, rangeBtn, allBtn, noneBtn, invertBtn);
+
   const controls = el("div", { class: "controls" });
-  const selectAll = el("label", { class: "check" });
-  const selectAllBox = el("input", { attrs: { type: "checkbox" } });
-  selectAll.append(selectAllBox, el("span", { text: "Selecionar todos" }));
   const optionBoxes = options.map((opt) => {
     const label = el("label", { class: "check" });
     const box = el("input", { attrs: { type: "checkbox" } });
@@ -639,51 +642,117 @@ function renderSelectableList(info, options, unit, cfg) {
     return { id: opt.id, box };
   });
   const button = el("button", { text: "Baixar selecionados" });
-  controls.append(selectAll, ...optionBoxes.map((o) => o.box.closest("label")), button);
+  controls.append(...optionBoxes.map((o) => o.box.closest("label")), button);
 
   const list = el("div", { class: "chapters" });
-  const boxes = [];
-  const rows = [];
-  for (const item of info.items || []) {
+
+  function makeEntry(item, isVolume) {
     const row = el("label", { class: "chapter" });
     const box = el("input", { attrs: { type: "checkbox", value: item.id } });
-    row.append(box, el("span", { text: item.label }));
-    list.appendChild(row);
-    boxes.push(box);
-    rows.push({ box, label: item.label, row });
+    const text = isVolume && item.count ? `${item.label} \u2014 ${item.count} capitulos` : item.label;
+    row.append(box, el("span", { text }));
+    return { box, label: text, row };
   }
-  selectAllBox.addEventListener("change", () => boxes.forEach((box) => { box.checked = selectAllBox.checked; }));
+
+  const chapterEntries = (info.items || []).map((item) => makeEntry(item, false));
+  const volumeEntries = (volumes || []).map((item) => makeEntry(item, true));
+
+  let entries = chapterEntries;
+
+  function paint() {
+    list.replaceChildren(...entries.map((entry) => entry.row));
+  }
+
+  const visibleEntries = () => entries.filter((entry) => entry.row.style.display !== "none");
+  const currentUnit = () => (entries === volumeEntries ? "volume" : unit);
+
+  const before = [filter, rangeWrap];
+  if (volumeEntries.length) {
+    const chaptersBtn = el("button", { text: "Capitulos" });
+    const volumesBtn = el("button", { class: "ghost", text: "Volumes" });
+    const setMode = (next) => {
+      entries = next;
+      const chaptersActive = next === chapterEntries;
+      chaptersBtn.className = chaptersActive ? "" : "ghost";
+      volumesBtn.className = chaptersActive ? "ghost" : "";
+      chaptersBtn.setAttribute("aria-pressed", String(chaptersActive));
+      volumesBtn.setAttribute("aria-pressed", String(!chaptersActive));
+      filter.value = "";
+      for (const entry of chapterEntries.concat(volumeEntries)) entry.row.style.display = "";
+      paint();
+    };
+    chaptersBtn.setAttribute("aria-pressed", "true");
+    volumesBtn.setAttribute("aria-pressed", "false");
+    chaptersBtn.addEventListener("click", () => setMode(chapterEntries));
+    volumesBtn.addEventListener("click", () => setMode(volumeEntries));
+    const toggle = el("div", { class: "row", style: "margin-bottom:8px" });
+    toggle.append(el("span", { class: "muted", text: "Exibir:" }), chaptersBtn, volumesBtn);
+    before.push(toggle);
+  }
+
+  paint();
+
+  allBtn.addEventListener("click", () => visibleEntries().forEach((entry) => { entry.box.checked = true; }));
+  noneBtn.addEventListener("click", () => visibleEntries().forEach((entry) => { entry.box.checked = false; }));
+  invertBtn.addEventListener("click", () => visibleEntries().forEach((entry) => { entry.box.checked = !entry.box.checked; }));
+
   filter.addEventListener("input", () => {
     const q = filter.value.trim().toLowerCase();
-    for (const r of rows) {
-      r.row.style.display = !q || r.label.toLowerCase().includes(q) ? "" : "none";
+    for (const entry of entries) {
+      entry.row.style.display = !q || entry.label.toLowerCase().includes(q) ? "" : "none";
     }
   });
+
   rangeBtn.addEventListener("click", () => {
-    const a = parseInt(from.value, 10);
-    const b = parseInt(to.value, 10);
-    if (isNaN(a) || isNaN(b)) { setStatus(cfg, "Informe De e Ate."); return; }
-    const lo = Math.min(a, b), hi = Math.max(a, b);
-    for (const r of rows) {
-      const n = labelNum(r.label);
-      if (n !== null && n >= lo && n <= hi) r.box.checked = true;
+    const ranges = parseRangeSpec(rangeInput.value);
+    if (!ranges) { setStatus(cfg, "Faixa invalida. Use 108, 108-255 ou 108,200-210."); return; }
+    let count = 0;
+    for (const entry of visibleEntries()) {
+      const n = labelNum(entry.label);
+      if (n === null) continue;
+      if (ranges.some(([lo, hi]) => n >= lo && n <= hi)) { entry.box.checked = true; count++; }
     }
+    setStatus(cfg, count ? `${count} item(ns) selecionado(s) pela faixa.` : "Nenhum item na faixa informada.");
   });
+
   button.addEventListener("click", () => {
-    const ids = boxes.filter((box) => box.checked).map((box) => box.value);
-    if (!ids.length) { setStatus(cfg, `Selecione ao menos um ${unit}.`); return; }
-    if (!confirm(`Baixar ${ids.length} ${unit}(s)?`)) return;
+    const ids = entries.filter((entry) => entry.box.checked).map((entry) => entry.box.value);
+    const unitNow = currentUnit();
+    if (!ids.length) { setStatus(cfg, `Selecione ao menos um ${unitNow}.`); return; }
+    if (!confirm(`Baixar ${ids.length} ${unitNow}(s)?`)) return;
     const opts = {};
     for (const { id, box } of optionBoxes) opts[id] = box.checked;
     startDownload(cfg, ids, opts);
   });
-  wrap.append(filter, rangeWrap, controls, list);
+
+  wrap.append(...before, controls, list);
   return wrap;
 }
 
+function parseRangeSpec(text) {
+  // aceita "108", "108-255" e "108,200-210"; null se invalido
+  const parts = String(text).split(",").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return null;
+  const ranges = [];
+  for (const part of parts) {
+    const range = part.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/);
+    if (range) {
+      const a = parseFloat(range[1]);
+      const b = parseFloat(range[2]);
+      ranges.push([Math.min(a, b), Math.max(a, b)]);
+      continue;
+    }
+    const single = part.match(/^(\d+(?:\.\d+)?)$/);
+    if (!single) return null;
+    const value = parseFloat(single[1]);
+    ranges.push([value, value]);
+  }
+  return ranges;
+}
+
 function labelNum(label) {
-  const m = String(label).match(/\d+/);
-  return m ? parseInt(m[0], 10) : null;
+  const m = String(label).match(/\d+(?:\.\d+)?/);
+  return m ? parseFloat(m[0]) : null;
 }
 
 function renderVideo(info, cfg) {
@@ -1104,6 +1173,22 @@ async function saveMangaSites() {
   }
 }
 
+// ---- meta (versao + pasta de downloads) ---------------------------------------
+
+async function loadMeta() {
+  try {
+    const data = await api.get("/api/meta");
+    const parts = [];
+    if (data.version) parts.push("ScraperHub " + data.version);
+    if (data.downloads_dir) parts.push("Salvando em: " + data.downloads_dir);
+    if (!parts.length) return;
+    const node = $("manga-meta");
+    node.textContent = parts.join(" \u00b7 ");
+    if (data.downloads_dir) node.title = data.downloads_dir;
+    node.classList.remove("hidden");
+  } catch (err) { /* silencioso */ }
+}
+
 // ---- troca de IP (fallback de bloqueio) ---------------------------------------
 
 let ipSwitch = { config: null, available: null };
@@ -1183,6 +1268,7 @@ loadScraperOptions();
 loadSites();
 loadMangaSites();
 loadIpSwitch();
+loadMeta();
 pollTasks();
 // com tarefas ativas: 1,5s; sem tarefas: uma sondagem a cada ~15s (tick 10)
 let pollTick = 0;

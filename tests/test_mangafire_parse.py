@@ -1,12 +1,13 @@
 """Testes das funcoes puras de parsing do scraper MangaFire."""
 from app.scrapers.mangafire_parse import (
     TITLE_PATH_RE,
-    chapter_folder,
     chapter_label,
     image_extension,
+    numbered_folder,
     order_items,
     parse_chapter_id,
     parse_title_url,
+    parse_volume_id,
     sanitize,
     select_ascending,
 )
@@ -20,6 +21,17 @@ def test_parse_chapter_id():
 def test_parse_chapter_id_sem_capitulo():
     assert parse_chapter_id("/title/slug") is None
     assert parse_chapter_id("") is None
+
+
+def test_parse_volume_id():
+    assert parse_volume_id("/title/slug/volume/78") == "78"
+    assert parse_volume_id("https://mangafire.to/title/slug/volume/1671?page=2") == "1671"
+
+
+def test_parse_volume_id_sem_volume():
+    assert parse_volume_id("/title/slug/chapter/1") is None
+    assert parse_volume_id("/title/slug") is None
+    assert parse_volume_id("") is None
 
 
 def test_chapter_label_completo():
@@ -111,13 +123,23 @@ def test_image_extension_desconhecida_padrao_jpg():
     assert image_extension("https://x.com/a", b"dados desconhecidos") == ".jpg"
 
 
-def test_chapter_folder():
-    assert chapter_folder(1, "Ch. 270.1") == "001_Ch_270.1"
-    assert chapter_folder(12, "Ch. 1") == "012_Ch_1"
+def test_numbered_folder_numero_real():
+    assert numbered_folder("Ch. 270.1") == "0270.1_Ch_270.1"
+    assert numbered_folder("Ch. 255 — x [en]") == "0255_Ch_255_—_x_[en]"
 
 
-def test_chapter_folder_vazio():
-    assert chapter_folder(0, "") == "000_sem-nome"
+def test_numbered_folder_decimal():
+    assert numbered_folder("Ch. 222.5 — y [en]") == "0222.5_Ch_222.5_—_y_[en]"
+
+
+def test_numbered_folder_volume():
+    assert numbered_folder("Vol. 28 [en]") == "0028_Vol_28_[en]"
+    assert numbered_folder("Vol. 28") == "0028_Vol_28"
+
+
+def test_numbered_folder_sem_numero():
+    assert numbered_folder("Extra") == "Extra"
+    assert numbered_folder("") == "sem-nome"
 
 
 def test_parse_title_url():
@@ -132,6 +154,17 @@ def test_parse_title_url_de_capitulo():
     )
     assert (
         parse_title_url("https://mangafire.to/title/slug/chapter/123?page=2")
+        == "https://mangafire.to/title/slug"
+    )
+
+
+def test_parse_title_url_de_volume():
+    assert (
+        parse_title_url("https://mangafire.to/title/slug/volume/78")
+        == "https://mangafire.to/title/slug"
+    )
+    assert (
+        parse_title_url("https://mangafire.to/title/slug/volume/78?page=2")
         == "https://mangafire.to/title/slug"
     )
 

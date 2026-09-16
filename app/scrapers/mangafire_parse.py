@@ -8,7 +8,9 @@ from urllib.parse import urlparse
 
 TITLE_PATH_RE = re.compile(r"^/title/([^/?#]+)/?$", re.IGNORECASE)
 CHAPTER_PATH_RE = re.compile(r"^/title/([^/?#]+)/chapter/([^/?#]+)", re.IGNORECASE)
+VOLUME_PATH_RE = re.compile(r"^/title/([^/?#]+)/volume/([^/?#]+)", re.IGNORECASE)
 CHAPTER_HREF_RE = re.compile(r"/chapter/([^/?#]+)", re.IGNORECASE)
+VOLUME_HREF_RE = re.compile(r"/volume/([^/?#]+)", re.IGNORECASE)
 INVALID_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
 SPACES_RE = re.compile(r"\s+")
 ABBREV_RE = re.compile(r"\.\s+")
@@ -28,9 +30,23 @@ def chapter_slug(label: str) -> str:
     return clean or "capitulo"
 
 
-def chapter_folder(index: int, label: str) -> str:
-    """Monta o nome da pasta do capitulo com prefixo ordinal."""
-    return f"{index:03d}_{chapter_slug(label)}"
+def numbered_folder(label: str) -> str:
+    """Monta o nome da pasta pelo NUMERO real do capitulo/volume.
+
+    O indice dentro da selecao muda entre rodadas (a mesma rodada gerou
+    '001_Ch_0' e '001_Ch_166' para capitulos diferentes); o numero do capitulo
+    e estavel. A parte inteira ganha zero-padding de 4 digitos e o slug do
+    rotulo e mantido, ex: 'Ch. 255 — x [en]' -> '0255_Ch_255_—_x_[en]'.
+    Sem numero no rotulo, cai para o slug puro.
+    """
+    slug = chapter_slug(label)
+    number = chapter_number(label)
+    if number is None:
+        return slug
+    texto = f"{number:.6f}".rstrip("0").rstrip(".")
+    inteiro, _, decimal = texto.partition(".")
+    prefixo = inteiro.zfill(4) + (f".{decimal}" if decimal else "")
+    return f"{prefixo}_{slug}"
 
 
 def image_extension(url: str, data: bytes) -> str:
@@ -49,10 +65,10 @@ def image_extension(url: str, data: bytes) -> str:
 
 
 def parse_title_url(url: str) -> str:
-    """Normaliza uma URL de titulo ou capitulo para a URL do titulo."""
+    """Normaliza uma URL de titulo, capitulo ou volume para a URL do titulo."""
     parsed = urlparse(url)
     path = parsed.path or ""
-    match = CHAPTER_PATH_RE.match(path)
+    match = CHAPTER_PATH_RE.match(path) or VOLUME_PATH_RE.match(path)
     if match:
         path = f"/title/{match.group(1)}"
     base = f"{parsed.scheme}://{parsed.netloc}"
@@ -62,6 +78,12 @@ def parse_title_url(url: str) -> str:
 def parse_chapter_id(href: str) -> str | None:
     """Extrai o id do capitulo de um href '/title/{slug}/chapter/{id}'."""
     match = CHAPTER_HREF_RE.search(href or "")
+    return match.group(1) if match else None
+
+
+def parse_volume_id(href: str) -> str | None:
+    """Extrai o id do volume de um href '/title/{slug}/volume/{id}'."""
+    match = VOLUME_HREF_RE.search(href or "")
     return match.group(1) if match else None
 
 

@@ -26,6 +26,7 @@ from .manga_search import (
     search_manga,
 )
 from .scrapers import REGISTRY, Scraper, ScraperError, TaskCancelled, detect, get_scraper, normalize_url
+from .scrapers.base import DOWNLOADS_DIR
 from .search import load_sites, save_sites, search_all, verify_quality
 from .tasks import TaskManager
 
@@ -39,7 +40,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.8.7")
+app = FastAPI(title="ScraperHub", version="1.9.0")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
@@ -196,6 +197,12 @@ def api_scrapers() -> list[dict]:
         }
         for s in REGISTRY
     ]
+
+
+@app.get("/api/meta")
+def api_meta() -> dict:
+    """Versao do backend e pasta onde os downloads sao gravados."""
+    return {"version": app.version, "downloads_dir": str(DOWNLOADS_DIR)}
 
 
 @app.post("/api/detect")
