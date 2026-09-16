@@ -651,7 +651,7 @@ function renderSelectableList(info, options, unit, cfg, volumes) {
     const box = el("input", { attrs: { type: "checkbox", value: item.id } });
     const text = isVolume && item.count ? `${item.label} \u2014 ${item.count} capitulos` : item.label;
     row.append(box, el("span", { text }));
-    return { box, label: text, row };
+    return { box, label: text, row, flag: (item.flag || "").toLowerCase() };
   }
 
   const chapterEntries = (info.items || []).map((item) => makeEntry(item, false));
@@ -666,7 +666,29 @@ function renderSelectableList(info, options, unit, cfg, volumes) {
   const visibleEntries = () => entries.filter((entry) => entry.row.style.display !== "none");
   const currentUnit = () => (entries === volumeEntries ? "volume" : unit);
 
-  const before = [filter, rangeWrap];
+  // Filtro por idioma (flag do item): une os idiomas de capitulos e volumes.
+  const idiomas = Array.from(new Set(chapterEntries.concat(volumeEntries).map((entry) => entry.flag).filter(Boolean))).sort();
+  const langSel = el("select", { attrs: { style: "max-width:140px" } });
+  langSel.append(el("option", { attrs: { value: "" }, text: "Todos os idiomas" }));
+  for (const idioma of idiomas) langSel.append(el("option", { attrs: { value: idioma }, text: idioma }));
+
+  function applyFilters() {
+    const q = filter.value.trim().toLowerCase();
+    const lang = langSel.value;
+    for (const entry of entries) {
+      const okTexto = !q || entry.label.toLowerCase().includes(q);
+      const okIdioma = !lang || entry.flag === lang;
+      entry.row.style.display = okTexto && okIdioma ? "" : "none";
+    }
+  }
+
+  const before = [filter];
+  if (idiomas.length) {
+    const langWrap = el("div", { class: "controls" });
+    langWrap.append(el("span", { class: "muted", text: "Idioma:" }), langSel);
+    before.push(langWrap);
+  }
+  before.push(rangeWrap);
   if (volumeEntries.length) {
     const chaptersBtn = el("button", { text: "Capitulos" });
     const volumesBtn = el("button", { class: "ghost", text: "Volumes" });
@@ -678,7 +700,7 @@ function renderSelectableList(info, options, unit, cfg, volumes) {
       chaptersBtn.setAttribute("aria-pressed", String(chaptersActive));
       volumesBtn.setAttribute("aria-pressed", String(!chaptersActive));
       filter.value = "";
-      for (const entry of chapterEntries.concat(volumeEntries)) entry.row.style.display = "";
+      applyFilters();
       paint();
     };
     chaptersBtn.setAttribute("aria-pressed", "true");
@@ -696,12 +718,8 @@ function renderSelectableList(info, options, unit, cfg, volumes) {
   noneBtn.addEventListener("click", () => visibleEntries().forEach((entry) => { entry.box.checked = false; }));
   invertBtn.addEventListener("click", () => visibleEntries().forEach((entry) => { entry.box.checked = !entry.box.checked; }));
 
-  filter.addEventListener("input", () => {
-    const q = filter.value.trim().toLowerCase();
-    for (const entry of entries) {
-      entry.row.style.display = !q || entry.label.toLowerCase().includes(q) ? "" : "none";
-    }
-  });
+  filter.addEventListener("input", applyFilters);
+  langSel.addEventListener("change", applyFilters);
 
   rangeBtn.addEventListener("click", () => {
     const ranges = parseRangeSpec(rangeInput.value);
