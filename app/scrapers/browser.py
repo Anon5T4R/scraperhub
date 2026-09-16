@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -136,13 +137,26 @@ def scroll_until_stable(
     return count
 
 
+BINARY_ATTEMPTS = 3
+BINARY_BACKOFF_S = (1.0, 3.0)
+
+
 def download_binary(page: Page, url: str) -> bytes:
     """Baixa os bytes de uma URL herdando cookies/TLS do navegador.
 
     Envia o Referer da pagina atual: alguns CDNs de manga rejeitam (403)
-    requisicoes sem referer.
+    requisicoes sem referer. CDN de manga derruba conexao em rajada
+    ('socket hang up'), entao ha retries com backoff curto antes de falhar.
     """
-    response = page.context.request.get(url, headers={"Referer": page.url})
-    if not response.ok:
-        raise ScraperError(f"Falha ao baixar arquivo ({response.status}): {url}")
-    return response.body()
+    erro = "nenhuma tentativa"
+    for attempt in range(1, BINARY_ATTEMPTS + 1):
+        try:
+            response = page.context.request.get(url, headers={"Referer": page.url})
+            if response.ok:
+                return response.body()
+            erro = f"Falha ao baixar arquivo ({response.status}): {url}"
+        except Exception as exc:  # noqa: BLE001 - rede instavel: vira retry
+            erro = f"{type(exc).__name__}: {exc}"
+        if attempt < BINARY_ATTEMPTS:
+            time.sleep(BINARY_BACKOFF_S[attempt - 1])
+    raise ScraperError(erro)

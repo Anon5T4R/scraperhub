@@ -547,7 +547,12 @@ class MangaFireScraper(Scraper):
             return None
         folder.mkdir(parents=True, exist_ok=True)
         for position, image_url in enumerate(images, start=1):
-            data = browser.download_binary(page, image_url)
+            try:
+                data = browser.download_binary(page, image_url)
+            except Exception as exc:  # noqa: BLE001 - CDN caiu: falha o item, nao a tarefa
+                motivo = f"{label}: imagem {position}/{len(images)} falhou ({type(exc).__name__})"
+                progress_cb(int((index - 1) / total * 100), f"Falhou {motivo}")
+                return motivo
             extension = image_extension(image_url, data)
             (folder / f"{position:03d}{extension}").write_bytes(data)
             percent = int(((index - 1) + position / len(images)) / total * 100)
