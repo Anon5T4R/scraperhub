@@ -427,10 +427,12 @@ class MangaFireScraper(Scraper):
                     const active = btns.find(b => b.classList.contains('is-active'));
                     const current = active ? parseInt(active.innerText, 10) : 0;
                     let target = null;
-                    let targetNum = current;
+                    let targetNum = Infinity;
                     for (const b of btns) {
                         const n = parseInt(b.innerText.trim(), 10);
-                        if (!isNaN(n) && n > targetNum) { target = b; targetNum = n; }
+                        // proxima pagina sequencial: clicar o maior numero
+                        // (ex.: 1 -> 5 com paginacao 1..5) pulava as do meio
+                        if (!isNaN(n) && n > current && n < targetNum) { target = b; targetNum = n; }
                     }
                     if (target) { target.click(); return true; }
                     return false;
