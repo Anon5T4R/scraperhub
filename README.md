@@ -1,4 +1,4 @@
-# ScraperHub
+﻿# ScraperHub
 
 Ferramenta pessoal de estudo (NAO comercial). Interface web local onde voce cola
 um link e o scraper certo e detectado automaticamente.
@@ -33,7 +33,7 @@ baixar o navegador usado pelo scraper de manga.
   `*/title/{slug}` ou `*/title/{slug}/chapter/{id}` quando nenhum outro scraper
   reconhece o host. A primeira carga de uma pagina demora ~10s (renderizacao).
   Downloads MangaFire rodam UM POR VEZ (lock) com pausa entre capitulos: o
-  site bloqueia com CAPTCHA (Turnstile) sob acesso concorrente/rapido — o
+  site bloqueia com CAPTCHA (Turnstile) sob acesso concorrente/rapido â€” o
   ScraperHub detecta o bloqueio, aborta com aviso claro e NAO burla CAPTCHA;
   capitulos ja baixados sao pulados ao tentar de novo. Quando o Cloudflare exige verificacao humana (challenge), o scraper nao burla o CAPTCHA: o painel do manga oferece o botao "Resolver verificacao", que abre uma janela do Chromium para VOCE resolver; os cookies resultantes (cf_clearance) sao salvos em mangafire-state.json (ignorado pelo git) e reaproveitados no info e nos downloads seguintes. O rotulo do capitulo
   inclui o idioma (`[English]` etc): o mesmo numero existe em varias linguas.
@@ -78,7 +78,7 @@ baixar o navegador usado pelo scraper de manga.
   protegido e o download falha com aviso claro, igual ao otakubr). Cole o link
   da pagina do anime: a UI lista todos os episodios com selecao multipla
   (por temporada no otakubr e animefire, `S1E01`).
-- **Anime EN** (`enanime`): series em agregadores em ingles — animeheaven.me
+- **Anime EN** (`enanime`): series em agregadores em ingles â€” animeheaven.me
   (MP4 direto do proprio CDN), gogoanime.is e 9anime.org.lv (episodios via
   servidor vidmoly, resolvido pelo yt-dlp como HLS). Cole o link da pagina
   da serie: a UI lista todos os episodios com selecao multipla (`Ep NN`).
@@ -112,7 +112,7 @@ do app; ignorado pelo git) ou pelo painel "Troca de IP" na aba Manga.
 ```
 
 IMPORTANTE:
-- A troca de IP NAO burla CAPTCHA — apenas muda a origem quando o site bloqueia
+- A troca de IP NAO burla CAPTCHA â€” apenas muda a origem quando o site bloqueia
   por taxa. Quando a verificacao humana aparece, o usuario resolve no modo
   assistido.
 - Cloudflare WARP e contraproducente contra challenge da Cloudflare: o WARP sai
@@ -122,6 +122,19 @@ IMPORTANTE:
   provider; use `custom` se tiver um comando proprio.
 - Kaspersky VPN nao tem CLI: troque o servidor pela interface e use o botao
   "Trocar de IP e tentar de novo".
+
+## Patch do yt-dlp (Blogger)
+
+O extractor do Blogger no yt-dlp esta quebrado upstream (o Google trocou a
+pagina ideo.g; issue yt-dlp#16044). O .venv leva o extractor refeito do
+PR yt-dlp#17129 aplicado em .venv\Lib\site-packages\yt_dlp\extractor\blogger.py`n(com marcador no topo do arquivo). O PyInstaller embute esse patch no exe.
+
+- Ao rodar pip install -U yt-dlp, o patch se perde: reaplique o diff do PR
+  (https://github.com/yt-dlp/yt-dlp/pull/17129.diff) ou descarte quando o PR
+  for mesclado e sair release.
+- Limitacao: videos hospedados via Fotos do Google (ex.: serv01.meusdoramas
+  usado pelo meusanimes) seguem recusados pelo backend do Google (erro 5 no
+  RPC) mesmo com o patch — sem caminho de download hoje.
 
 ## Executavel (um arquivo so, PORTATIL)
 
@@ -140,7 +153,7 @@ IMPORTANTE:
 
 Gera `dist\ScraperHub.exe` (~240MB) com TUDO embutido: FastAPI + Playwright
 + yt-dlp + gallery-dl + gdown + Chromium headless + ffmpeg. Zero downloads
-ao abrir em outra maquina — so passe o exe. Dois cliques: sobe o servidor em
+ao abrir em outra maquina â€” so passe o exe. Dois cliques: sobe o servidor em
 127.0.0.1:8765 e abre o navegador sozinho. A extracao interna do onefile faz
 a abertura demorar ~15s a mais; e o preco do arquivo unico.
 
@@ -149,11 +162,11 @@ NOTAS:
   processo em execucao impede a sobrescrita e voce testa um build velho sem
   perceber).
 - O numero da revisao do Chromium (ex: 1234) muda a cada versao do
-  Playwright — confira o nome real da pasta em `%LOCALAPPDATA%\ms-playwright`
+  Playwright â€” confira o nome real da pasta em `%LOCALAPPDATA%\ms-playwright`
   e ajuste o comando.
 - Sem rede nenhuma no build: o exe ainda baixa o Chromium/ffmpeg sozinho na
   primeira execucao, se faltarem no pacote (fallback do codigo).
-- O modo assistido de CAPTCHA precisa do Chromium COMPLETO (chromium-XXXX) — por isso ele tambem vai no empacotamento. Isso aumenta o exe (~+150MB). Sem ele, so o modo headless funciona.
+- O modo assistido de CAPTCHA precisa do Chromium COMPLETO (chromium-XXXX) â€” por isso ele tambem vai no empacotamento. Isso aumenta o exe (~+150MB). Sem ele, so o modo headless funciona.
 
 ## Release
 
