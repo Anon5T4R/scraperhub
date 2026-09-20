@@ -230,6 +230,7 @@ function renderManga(info, cfg) {
   return renderSelectableList(info, [
     { id: "cbz", label: "Empacotar em CBZ" },
     { id: "cbz_only", label: "Só o CBZ (apaga as imagens avulsas)" },
+    { id: "update", label: "Atualizar volumes (conferir paginas novas)" },
   ], "capitulo", cfg, info.volumes);
 }
 

@@ -126,6 +126,29 @@ def item_noun(kind: str) -> str:
     return "Volume" if kind == "volume" else "Capitulo"
 
 
+class ItemSkipped(Exception):
+    """Sinal interno: item ja estava completo (sem novidades).
+
+    Levantado por `_download_item` quando a contagem do reader bate com o
+    disco ou com o manifesto em modo update; o chamador pula sem regravar o
+    manifesto, que ja esta correto.
+    """
+
+
+def skip_item(on_disk: int, known_pages: int | None, collected: int) -> bool:
+    """True se o item ja esta completo e nao precisa re-baixar as imagens.
+
+    `on_disk`: paginas gravadas na pasta; `known_pages`: contagem registrada
+    no manifesto quando o modo update conferiu um volume (None fora dele);
+    `collected`: paginas que o reader mostrou agora. No modo so-CBZ a pasta
+    foi apagada (on_disk=0), entao a comparacao com `known_pages` e o que
+    confirma que o .cbz existente continua batendo com o site.
+    """
+    if collected == on_disk:
+        return True
+    return known_pages is not None and collected == known_pages
+
+
 ROWS_JS = """
 els => els.map(e => ({
     href: e.getAttribute('href') || '',
@@ -263,6 +286,10 @@ class MangaFireScraper(Scraper):
                 raise ScraperError("Nenhum capitulo ou volume valido foi selecionado.")
             base = DOWNLOADS_DIR / title
             state = load_state(base)
+            # modo update: re-conferir na rede os volumes ja baixados em CBZ,
+            # re-baixando so os que mudaram de contagem (capitulos seguem o
+            # fast-path de sempre)
+            update = bool(options.get("update"))
             # nomes antigos usavam o indice da selecao (mudava entre rodadas):
             # renomeia para o numero real ANTES de decidir o que pular
             labels = {
@@ -282,7 +309,18 @@ class MangaFireScraper(Scraper):
                 section = "volumes" if kind == "volume" else "chapters"
                 noun = item_noun(kind)
                 folder = base / numbered_folder(label)
-                if is_complete(state, item_id, folder, section):
+                known_pages: int | None = None
+                if kind == "volume" and update:
+                    # nao usa o fast-path `is_complete`: o reader precisa
+                    # revelar a contagem atual do site para comparar
+                    entry = (state.get("volumes") or {}).get(item_id)
+                    if (
+                        isinstance(entry, dict)
+                        and entry.get("done")
+                        and entry.get("pages") is not None
+                    ):
+                        known_pages = int(entry["pages"])
+                elif is_complete(state, item_id, folder, section):
                     # ja baixado: pula SEM abrir a pagina (retomada sem rede)
                     progress_cb(
                         int(index / total * 100),
@@ -299,17 +337,23 @@ class MangaFireScraper(Scraper):
                     target_url = f"{title_url}/chapter/{item_id}"
                 item_page = self._new_page(context)
                 try:
-                    falha = self._download_item(
-                        item_page,
-                        folder,
-                        index,
-                        item,
-                        progress_cb,
-                        options,
-                        total,
-                        target_url,
-                        kind,
-                    )
+                    try:
+                        falha = self._download_item(
+                            item_page,
+                            folder,
+                            index,
+                            item,
+                            progress_cb,
+                            options,
+                            total,
+                            target_url,
+                            kind,
+                            known_pages=known_pages,
+                        )
+                    except ItemSkipped:
+                        # volume em modo update sem novidades: manifesto ja
+                        # esta correto, nao regravar nem re-empacotar
+                        continue
                 finally:
                     item_page.close()
                 if falha:
@@ -527,6 +571,7 @@ class MangaFireScraper(Scraper):
         total: int,
         target_url: str,
         kind: str,
+        known_pages: int | None = None,
     ) -> str | None:
         """Baixa um capitulo ou volume; retorna motivo de falha ou None se ok.
 
@@ -534,6 +579,10 @@ class MangaFireScraper(Scraper):
         permanece o skip por rede para bibliotecas ANTIGAS (sem manifesto):
         na primeira passada ele detecta o item completo, pula e o manifesto e
         gravado — as retomadas seguintes ja nao tocam a rede.
+
+        `known_pages` so vem preenchido no modo update (volumes): a contagem
+        registrada no manifesto e comparada com a do reader para decidir se o
+        .cbz precisa ser refeito.
         """
         label = str(item["label"])
         noun = item_noun(kind)
@@ -558,9 +607,23 @@ class MangaFireScraper(Scraper):
             motivo = f"{label}: {last_error}" if last_error else f"{label}: reader sem imagens"
             progress_cb(int((index - 1) / total * 100), f"Falhou {motivo}")
             return motivo
-        if folder_pages(folder) == len(images):
-            progress_cb(int((index - 1) / total * 100), f"{noun} {label} ja baixado, pulando")
-            return None
+        if skip_item(folder_pages(folder), known_pages, len(images)):
+            if known_pages is None:
+                # biblioteca antiga: o manifesto sera gravado por _download_all
+                progress_cb(int((index - 1) / total * 100), f"{noun} {label} ja baixado, pulando")
+                return None
+            # modo update: contagem igual a do site, nada a refazer
+            progress_cb(int((index - 1) / total * 100), f"{noun} {label} sem novidades, pulando")
+            raise ItemSkipped
+        if known_pages is not None and known_pages != len(images):
+            progress_cb(
+                int((index - 1) / total * 100),
+                f"{noun} {label} atualizando ({known_pages} -> {len(images)} paginas)",
+            )
+        if known_pages is not None:
+            # re-baixar do zero: paginas velhas (001..N) sobrariam na pasta
+            # se a contagem nova fosse menor
+            shutil.rmtree(folder, ignore_errors=True)
         folder.mkdir(parents=True, exist_ok=True)
         for position, image_url in enumerate(images, start=1):
             try:
