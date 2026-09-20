@@ -41,9 +41,11 @@ jobs:
           pip install pyinstaller
           python -m playwright install chromium
       - name: Baixar ffmpeg (build oficial BtbN win64 gpl)
+        shell: pwsh
         run: |
           curl -L -o ffmpeg.zip https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip
-          7z e ffmpeg.zip -y -o. ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe
+          7z e ffmpeg.zip -y -offmpeg_tmp "ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe"
+          Move-Item ffmpeg_tmp/ffmpeg.exe . -Force
       - name: Detectar revisao do Chromium
         id: chromium
         shell: pwsh
