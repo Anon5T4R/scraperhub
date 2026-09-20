@@ -4,11 +4,3 @@ line-length = 110
 [tool.ruff.lint]
 select = ["E", "F", "B", "W", "I"]
 ignore = ["E501"]
-
-[tool.ruff.lint.per-file-ignores]
-# Arquivos FORA do escopo desta limpeza (nao devem ser editados): o I001 e
-# cosmetico (imports longos/ordem) e o B010 e um setattr intencional no shim
-# do yt-dlp vendido. Isolados aqui em vez de mexer nesses arquivos.
-"app/main.py" = ["I001"]
-"app/scrapers/video.py" = ["I001"]
-"app/vendor/*" = ["B010"]

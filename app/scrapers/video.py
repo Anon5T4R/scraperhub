@@ -5,9 +5,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from .animestream_net import SilentLogger
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .deps import ensure_ffmpeg
-from .animestream_net import SilentLogger
 
 # Patch de compatibilidade do extractor do Blogger (PR yt-dlp#17129) aplicado em
 # runtime. E opcional: se o yt-dlp mudar internamente o patch falha e o app

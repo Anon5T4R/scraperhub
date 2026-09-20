@@ -16,13 +16,23 @@ from pydantic import BaseModel, Field
 from .assembly import download_season, plan_full, plan_season
 from .ip_switch import (
     available_providers as ip_switch_available,
+)
+from .ip_switch import (
     load_config as load_ip_switch,
+)
+from .ip_switch import (
     save_config as save_ip_switch,
+)
+from .ip_switch import (
     switch_ip,
 )
 from .manga_search import (
     load_sites as load_manga_sites,
+)
+from .manga_search import (
     save_sites as save_manga_sites,
+)
+from .manga_search import (
     search_manga,
 )
 from .scrapers import REGISTRY, Scraper, ScraperError, TaskCancelled, detect, get_scraper, normalize_url
@@ -40,7 +50,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.10.0")
+app = FastAPI(title="ScraperHub", version="1.10.1")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")

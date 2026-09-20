@@ -46,7 +46,7 @@ def apply_ytdlp_patches() -> bool:
         entry = registry['BloggerIE']
         if getattr(entry, '_module', None) == 'yt_dlp.extractor.blogger':
             # classe lazy do yt-dlp: fixa a versao vendida (sobrescreve cache)
-            setattr(entry, '_real_class', VendoredBloggerIE)
+            entry._real_class = VendoredBloggerIE
         else:
             registry['BloggerIE'] = VendoredBloggerIE
         patched = True
