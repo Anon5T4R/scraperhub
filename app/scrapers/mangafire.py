@@ -1,6 +1,7 @@
 """Scraper de manga para sites SPA no estilo mangafire.to (Playwright)."""
 from __future__ import annotations
 
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -138,6 +139,26 @@ els => els.map(e => ({
 """
 
 IMAGES_JS = "els => els.map(e => e.currentSrc || e.src || '').filter(u => u.startsWith('http'))"
+
+# Clique do npager: avanca para a PROXIMA pagina sequencial (menor numero
+# maior que o ativo). Clicar o maior numero disponivel (ex.: 1 -> 5 com
+# paginacao 1..5) pulava as paginas do meio (bug v1.9.2). Os numeros podem
+# vir com '...' (ellipsis) e sao re-renderizados pelo site a cada clique.
+PAGER_JS = """
+() => {
+    const btns = Array.from(document.querySelectorAll('.npager__num'));
+    const active = btns.find(b => b.classList.contains('is-active'));
+    const current = active ? parseInt(active.innerText, 10) : 0;
+    let target = null;
+    let targetNum = Infinity;
+    for (const b of btns) {
+        const n = parseInt(b.innerText.trim(), 10);
+        if (!isNaN(n) && n > current && n < targetNum) { target = b; targetNum = n; }
+    }
+    if (target) { target.click(); return true; }
+    return false;
+}
+"""
 
 
 class MangaFireScraper(Scraper):
@@ -311,12 +332,23 @@ class MangaFireScraper(Scraper):
                     )
                     continue
                 consecutivas = 0
-                record_done(state, item_id, folder, section)
+                cbz_only = bool(options.get("cbz_only"))
+                record_done(state, item_id, folder, section, cbz=cbz_only)
                 save_state(base, state)
-                progress_cb(
-                    int(index / total * 100),
-                    f"Concluido {noun.lower()} {label} ({index}/{total})",
-                )
+                if cbz_only:
+                    # o manifesto ja registrou a contagem de paginas (e o
+                    # .cbz existe): apagar as imagens avulsas nao quebra a
+                    # retomada — `is_complete` confere o arquivo .cbz
+                    shutil.rmtree(folder, ignore_errors=True)
+                    progress_cb(
+                        int(index / total * 100),
+                        f"{noun} {label} empacotado em CBZ (imagens avulsas removidas) ({index}/{total})",
+                    )
+                else:
+                    progress_cb(
+                        int(index / total * 100),
+                        f"Concluido {noun.lower()} {label} ({index}/{total})",
+                    )
                 if index < total:
                     time.sleep(CHAPTER_GAP_S)
             if falhas:
@@ -421,23 +453,7 @@ class MangaFireScraper(Scraper):
                 if row_id and row_id not in seen:
                     seen.add(row_id)
                     all_rows.append(row)
-            clicked = page.evaluate(
-                """() => {
-                    const btns = Array.from(document.querySelectorAll('.npager__num'));
-                    const active = btns.find(b => b.classList.contains('is-active'));
-                    const current = active ? parseInt(active.innerText, 10) : 0;
-                    let target = null;
-                    let targetNum = Infinity;
-                    for (const b of btns) {
-                        const n = parseInt(b.innerText.trim(), 10);
-                        // proxima pagina sequencial: clicar o maior numero
-                        // (ex.: 1 -> 5 com paginacao 1..5) pulava as do meio
-                        if (!isNaN(n) && n > current && n < targetNum) { target = b; targetNum = n; }
-                    }
-                    if (target) { target.click(); return true; }
-                    return false;
-                }"""
-            )
+            clicked = page.evaluate(PAGER_JS)
             if not clicked:
                 break
         return all_rows
@@ -558,7 +574,7 @@ class MangaFireScraper(Scraper):
             percent = int(((index - 1) + position / len(images)) / total * 100)
             progress_cb(percent, f"{noun[:3]} {label}/pg {position}")
             time.sleep(DELAY_S)
-        if options.get("cbz"):
+        if options.get("cbz") or options.get("cbz_only"):
             make_cbz(folder)
         return None
 
@@ -579,7 +595,8 @@ class MangaFireScraper(Scraper):
             page.wait_for_selector(CHAPTER_IMG_SELECTOR, timeout=IMG_FIRST_TIMEOUT_MS)
         except Exception:
             if is_challenge_page(page.url, page.content().lower()):
-                raise SiteBlocked(CAPTCHA_MESSAGE)
+                # timeout e irrelevante aqui: o motivo real e o challenge
+                raise SiteBlocked(CAPTCHA_MESSAGE) from None
             # sem imagens em IMG_FIRST_TIMEOUT_MS: segue para o scroll/navegacao,
             # que cobre readers lentos/lazy
         if kind == "volume":

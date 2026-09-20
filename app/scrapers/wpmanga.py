@@ -20,9 +20,9 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
-from .mangafire_parse import image_extension, make_cbz, sanitize
 from .animestream_net import retry_call
+from .base import DOWNLOADS_DIR, USER_AGENT, ProgressCb, Scraper, ScraperError
+from .mangafire_parse import image_extension, make_cbz, sanitize
 
 CHAPTER_HREF_RE = re.compile(
     r"(?:"
@@ -208,7 +208,9 @@ class WpMangaScraper(Scraper):
                             fetch_image,
                             attempts=3,
                             wait_s=5,
-                            on_retry=lambda tentativa, exc: progress_cb(
+                            # done vai como default: o callback roda depois
+                            # (B023) e nao pode ler o valor ja incrementado
+                            on_retry=lambda tentativa, exc, done=done: progress_cb(
                                 int((done + 1) * 100 / total),
                                 f"falhou (tentativa {tentativa}/3): {str(exc)[-80:]} — repetindo",
                             ),

@@ -19,6 +19,10 @@ python -m uvicorn app.main:app --port 8765
 
 Abra http://localhost:8765 no navegador.
 
+Para reproduzir o ambiente EXATO testado (versoes pinadas de todas as
+dependencias de runtime), use `pip install -r requirements.lock`. O
+`requirements.txt` continua sendo a fonte de intencao (nomes/ranges).
+
 Se `uv` estiver disponivel, o venv pode ser criado com `uv venv` e as
 dependencias instaladas com `uv pip install -r requirements.txt`.
 Depois do `pip install`, rode `python -m playwright install chromium` para
@@ -37,6 +41,10 @@ baixar o navegador usado pelo scraper de manga.
   ScraperHub detecta o bloqueio, aborta com aviso claro e NAO burla CAPTCHA;
   capitulos ja baixados sao pulados ao tentar de novo. Quando o Cloudflare exige verificacao humana (challenge), o scraper nao burla o CAPTCHA: o painel do manga oferece o botao "Resolver verificacao", que abre uma janela do Chromium para VOCE resolver; os cookies resultantes (cf_clearance) sao salvos em mangafire-state.json (ignorado pelo git) e reaproveitados no info e nos downloads seguintes. O rotulo do capitulo
   inclui o idioma (`[English]` etc): o mesmo numero existe em varias linguas.
+  Opcoes de download do manga: "Empacotar em CBZ" (gera o .cbz ao lado da
+  pasta de imagens) e "So o CBZ" (empacota e APAGA as imagens avulsas — o
+  manifesto `_estado.json` registra o modo, e a retomada confere a existencia
+  do `.cbz` em vez de contar paginas na pasta).
 - **Manga WordPress** (`wpmanga`): sites WordPress server-rendered cuja home
   lista capitulos como links `/manga/{slug}-chapter-N` (ex:
   w2.chainsmokercat.website). Tambem cobre o padrao Madara
@@ -126,12 +134,16 @@ IMPORTANTE:
 ## Patch do yt-dlp (Blogger)
 
 O extractor do Blogger no yt-dlp esta quebrado upstream (o Google trocou a
-pagina ideo.g; issue yt-dlp#16044). O .venv leva o extractor refeito do
-PR yt-dlp#17129 aplicado em .venv\Lib\site-packages\yt_dlp\extractor\blogger.py`n(com marcador no topo do arquivo). O PyInstaller embute esse patch no exe.
+pagina video.g; issue yt-dlp#16044). O extractor refeito do PR yt-dlp#17129
+vive versionado em `app/vendor/yt_dlp_blogger.py` e e aplicado em RUNTIME por
+`app/vendor/__init__.py` (chamado no import de `app/scrapers/video.py`), sem
+tocar no `.venv`. Assim `pip install -U yt-dlp` nao perde mais o patch: a
+classe do Blogger e substituida no modulo do yt-dlp antes de ser instanciada
+(o yt-dlp resolve a classe real por lazy loading; o monkey-patch cobre o
+registry e o `_CLASS_LOOKUP`). O PyInstaller embute `app/vendor` no exe.
 
-- Ao rodar pip install -U yt-dlp, o patch se perde: reaplique o diff do PR
-  (https://github.com/yt-dlp/yt-dlp/pull/17129.diff) ou descarte quando o PR
-  for mesclado e sair release.
+- Descarte este patch quando o PR #17129 for mesclado e sair numa release:
+  remova a chamada em `app/scrapers/video.py` e a pasta `app/vendor/`.
 - Limitacao: videos hospedados via Fotos do Google (ex.: serv01.meusdoramas
   usado pelo meusanimes) seguem recusados pelo backend do Google (erro 5 no
   RPC) mesmo com o patch — sem caminho de download hoje.
@@ -170,14 +182,26 @@ NOTAS:
 
 ## Release
 
-Fluxo manual (sem CI). A tag `vX.Y.Z` e a fonte da verdade da versao.
+A partir da v1.10.0 o CI (GitHub Actions) faz o build: em push para `master`
+roda lint + testes; em tag `vX.Y.Z` roda os testes, builda o exe portatil
+(ffmpeg + Chromium embutidos, revisao detectada automaticamente) e publica o
+release anexando `dist/ScraperHub.exe`. Fluxo:
 
-1. Bump da versao em `app/main.py` (`FastAPI(version="X.Y.Z")`) para a nova tag.
-2. Commit das mudancas + do bump.
-3. Tag: `git tag vX.Y.Z`.
-4. Push: `git push origin master && git push origin vX.Y.Z`.
-5. Release no GitHub (so a tag NAO marca "Latest"):
-   `gh release create vX.Y.Z -R Anon5T4R/scraperhub --latest --title "ScraperHub vX.Y.Z" --notes "..."`.
+1. Bump da versao em `app/main.py` (`FastAPI(version="X.Y.Z")`).
+2. Commit das mudancas + do bump; `git push origin master`.
+3. Tag e push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. O Actions cria o release (com notas geradas) e marca Latest.
+
+Se precisar de release manual: `gh release create vX.Y.Z -R Anon5T4R/scraperhub
+--latest --title "ScraperHub vX.Y.Z" --notes "..."` apos subir o exe.
+
+Outras notas de operacao:
+- Tarefas sao persistidas em `tasks-state.json` (raiz do app, ignorado pelo
+  git): apos um restart, tarefas que estavam rodando aparecem como
+  "Interrompida pelo reinicio do app" e o botao Tentar de novo continua
+  funcionando.
+- O CI impoe o ambiente de `requirements.lock` (pins exatos do ambiente
+  testado); `requirements.txt` continua sendo a intencao de ranges.
 
 ## Avisos
 

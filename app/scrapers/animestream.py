@@ -9,9 +9,9 @@ import httpx
 from bs4 import BeautifulSoup
 
 from . import browser
+from .animestream_net import USER_AGENT, ensure_folder, fetch, host, run_downloads, sanitize, ytdlp
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .deps import ensure_ffmpeg
-from .animestream_net import USER_AGENT, ensure_folder, fetch, host, run_downloads, sanitize, ytdlp
 
 HOSTS = ("animeq.cloud", "otakubr.com", "animesdigital.org", "animexnovel.com", "animefire.app", "animefire.com")
 MAX_PAGES = 30

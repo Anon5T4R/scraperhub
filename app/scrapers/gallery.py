@@ -14,9 +14,9 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .animestream_net import retry_call
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .mangafire_parse import image_extension, sanitize
-from .animestream_net import retry_call
 
 GALLERY_HOSTS = (
     r"imgur\.com",

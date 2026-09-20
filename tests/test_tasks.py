@@ -1,4 +1,5 @@
 """Testes do TaskManager: estados, erro e limites do log."""
+import json
 import threading
 import time
 
@@ -78,3 +79,46 @@ def test_prune_mantem_apenas_ultimas_finalizadas():
     manager.create(lambda _tid: None)
     time.sleep(0.2)
     assert len(manager.list_tasks()) <= MAX_FINISHED_TASKS + 1
+
+
+def test_persistencia_tarefa_finalizada(tmp_path):
+    state_path = tmp_path / "tasks-state.json"
+    manager = TaskManager(max_workers=1, state_path=state_path)
+    task_id = manager.create(lambda _tid: None)
+    _wait(task_id, manager)
+
+    outro = TaskManager(max_workers=1, state_path=state_path)
+    task = outro.get(task_id)
+    assert task is not None
+    assert task["status"] == "done"
+    assert task["log"][-1] == "Concluido"
+
+
+def test_persistencia_running_vira_cancelled(tmp_path):
+    state_path = tmp_path / "tasks-state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "abc": {
+                    "id": "abc",
+                    "status": "running",
+                    "progress": 42,
+                    "current_item": "cap 1",
+                    "log": ["baixando"],
+                    "error": None,
+                    "error_challenge": False,
+                    "cancel": False,
+                    "retry": {"kind": "download", "url": "http://exemplo"},
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    manager = TaskManager(max_workers=1, state_path=state_path)
+    task = manager.get("abc")
+    assert task["status"] == "cancelled"
+    assert task["log"][-1] == "Interrompida pelo reinicio do app"
+    # o payload do retry sobrevive: "Tentar de novo" continua funcionando
+    assert task["retry"] == {"kind": "download", "url": "http://exemplo"}

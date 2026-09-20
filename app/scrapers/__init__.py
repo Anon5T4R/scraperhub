@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from .base import Scraper, ScraperError, TaskCancelled
 from .animestream import AnimeStreamScraper
+from .base import Scraper, ScraperError, TaskCancelled
 from .ebook import EbookScraper
 from .enanime import EnAnimeScraper
 from .filehost import FileHostScraper

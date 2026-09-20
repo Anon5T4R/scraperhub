@@ -23,6 +23,35 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+# UA do Chromium efetivamente em uso, preenchido quando o navegador sobe (ver
+# `browser.run`). Ate la, os clients httpx do processo usam o fallback acima.
+_synced_user_agent: str | None = None
+
+
+def chromium_user_agent(chromium_version: str) -> str:
+    """Compõe o User-Agent a partir da versão do Chromium em uso.
+
+    Só o major importa para os sites, então o token do Chrome vira
+    "<major>.0.0.0" — evita expor a versão completa (ex "130.0.6723.44") e
+    mantém o UA coerente com o navegador que de fato faz as requisições.
+    """
+    major = str(chromium_version).split(".")[0] or "124"
+    return (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        f"(KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
+    )
+
+
+def set_current_user_agent(user_agent: str) -> None:
+    """Registra (cache por processo) o UA do navegador em uso."""
+    global _synced_user_agent
+    _synced_user_agent = user_agent
+
+
+def current_user_agent() -> str:
+    """UA sincronizado com o Chromium, se já conhecido; senão o fallback."""
+    return _synced_user_agent or USER_AGENT
+
 
 class ScraperError(Exception):
     """Erro tipado levantado por um scraper, com mensagem amigavel.

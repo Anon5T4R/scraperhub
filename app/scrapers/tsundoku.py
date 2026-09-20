@@ -18,9 +18,9 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import BrowserContext, Page
 
 from . import browser
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
-from .mangafire_parse import image_extension, make_cbz, sanitize
 from .animestream_net import retry_call
+from .base import DOWNLOADS_DIR, USER_AGENT, ProgressCb, Scraper, ScraperError
+from .mangafire_parse import image_extension, make_cbz, sanitize
 
 CHAPTER_NUM_RE = re.compile(r"cap-(\d+)", re.IGNORECASE)
 CHAPTER_IMG_SELECTOR = "#readerarea img"
@@ -211,7 +211,9 @@ class TsundokuScraper(Scraper):
                 fetch_image,
                 attempts=3,
                 wait_s=5,
-                on_retry=lambda tentativa, exc: progress_cb(
+                # percent vai como default: o callback roda depois, quando o
+                # loop ja avancou a variavel (B023)
+                on_retry=lambda tentativa, exc, percent=percent: progress_cb(
                     percent,
                     f"falhou (tentativa {tentativa}/3): {str(exc)[-80:]} — repetindo",
                 ),

@@ -9,7 +9,10 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .base import DOWNLOADS_DIR, ProgressCb, ScraperError, USER_AGENT
+from .base import DOWNLOADS_DIR, ProgressCb, ScraperError, current_user_agent
+
+# Reexporta o fallback para os scrapers que ainda montam o header direto.
+from .base import USER_AGENT as USER_AGENT
 
 RATE_S = 0.5
 EP_RETRIES = 3
@@ -65,7 +68,7 @@ def host(url: str) -> str:
 
 def fetch(url: str, referer: str | None = None) -> str:
     """GET com UA de navegador; erros viram ScraperError."""
-    headers = {"User-Agent": USER_AGENT}
+    headers = {"User-Agent": current_user_agent()}
     if referer:
         headers["Referer"] = referer
     try:

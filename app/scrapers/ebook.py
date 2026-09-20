@@ -13,9 +13,9 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
-from .mangafire_parse import sanitize
 from .animestream_net import retry_call
+from .base import DOWNLOADS_DIR, USER_AGENT, ProgressCb, Scraper, ScraperError
+from .mangafire_parse import sanitize
 
 EBOOK_EXTS = (".epub", ".pdf", ".mobi", ".azw3", ".fb2")
 PROTECTED_EXTS = (".acsm", ".azw", ".azw3", ".prc")

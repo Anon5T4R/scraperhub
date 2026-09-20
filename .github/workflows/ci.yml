@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  testes:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.lock
+          pip install ruff==0.16.8
+      - name: Lint (ruff)
+        run: ruff check app tests run.py
+      - name: Chromium do Playwright (teste do npager)
+        run: python -m playwright install chromium
+      - name: Testes
+        run: python -m pytest tests -q
+
+  exe:
+    # build do executavel portatil so em tag; anexa ao release da tag
+    needs: testes
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: |
+          pip install -r requirements.lock
+          pip install pyinstaller
+          python -m playwright install chromium
+      - name: Baixar ffmpeg (build oficial BtbN win64 gpl)
+        run: |
+          curl -L -o ffmpeg.zip https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip
+          7z e ffmpeg.zip -y -o. ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe
+      - name: Detectar revisao do Chromium
+        id: chromium
+        shell: pwsh
+        run: |
+          $headless = (Get-ChildItem "$env:LOCALAPPDATA\ms-playwright" -Directory -Filter "chromium_headless_shell-*" | Select-Object -First 1).Name
+          $full = (Get-ChildItem "$env:LOCALAPPDATA\ms-playwright" -Directory -Filter "chromium-*" | Where-Object { $_.Name -notlike "*shell*" } | Select-Object -First 1).Name
+          "headless=$headless" >> $env:GITHUB_OUTPUT
+          "full=$full" >> $env:GITHUB_OUTPUT
+      - name: Build do exe (onefile)
+        shell: pwsh
+        run: >
+          python -m PyInstaller --noconfirm --onefile --name ScraperHub
+          --add-data "web;web"
+          --add-binary "ffmpeg.exe;."
+          --add-data "$env:LOCALAPPDATA\ms-playwright\${{ steps.chromium.outputs.headless }};ms-playwright/${{ steps.chromium.outputs.headless }}"
+          --add-data "$env:LOCALAPPDATA\ms-playwright\${{ steps.chromium.outputs.full }};ms-playwright/${{ steps.chromium.outputs.full }}"
+          --collect-all gallery_dl --collect-all gdown run.py
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ScraperHub.exe
+          generate_release_notes: true

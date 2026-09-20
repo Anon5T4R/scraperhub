@@ -1,4 +1,4 @@
-"""Descoberta de novas fontes de anime via busca web (DuckDuckGo HTML)."""
+"""Descoberta de novas fontes de anime via busca web (DuckDuckGo HTML/Lite)."""
 from __future__ import annotations
 
 import re
@@ -7,9 +7,10 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .scrapers.animestream_net import USER_AGENT
+from .scrapers.base import current_user_agent
 
 DDG_URL = "https://html.duckduckgo.com/html/"
+DDG_LITE_URL = "https://lite.duckduckgo.com/lite/"
 GOOGLE_URL = "https://www.google.com/search"
 # hosts que nunca sao fonte de episodio baixavel
 BLOCKLIST = (
@@ -24,10 +25,15 @@ MAX_HOSTS = 6
 
 
 def _search_results(term: str) -> list[str]:
-    """URLs de resultado da busca HTML do DuckDuckGo, com fallback pro Google."""
+    """URLs de resultado da busca do DuckDuckGo (HTML) com fallbacks em cascata.
+
+    Cascata: DuckDuckGo HTML -> DuckDuckGo Lite -> Google (ultimo recurso).
+    O lite e uma pagina de tabela sem JS/cookie wall, bem mais estavel que o
+    Google (que responde consent wall/render por JS e pode nao trazer link).
+    """
     try:
         with httpx.Client(
-            headers={"User-Agent": USER_AGENT},
+            headers={"User-Agent": current_user_agent()},
             follow_redirects=True,
             timeout=20,
         ) as client:
@@ -37,7 +43,7 @@ def _search_results(term: str) -> list[str]:
             )
             response.raise_for_status()
     except httpx.HTTPError:
-        return []
+        return _ddg_lite_results(term)
     soup = BeautifulSoup(response.text, "lxml")
     urls: list[str] = []
     for link in soup.select("a.result__a, a.result__url"):
@@ -49,14 +55,48 @@ def _search_results(term: str) -> list[str]:
                 urls.append(decoded)
         elif href.startswith("http"):
             urls.append(href)
-    return urls or _google_results(term)
+    return urls or _ddg_lite_results(term) or _google_results(term)
+
+
+def _ddg_lite_results(term: str) -> list[str]:
+    """URLs de resultado do DuckDuckGo Lite (fallback mais estavel que o Google).
+
+    O lite devolve uma tabela simples: os resultados sao `a.result-link`
+    (alguns como redirect /l/?uddg=) ou links `http` diretos na tabela.
+    """
+    try:
+        with httpx.Client(
+            headers={"User-Agent": current_user_agent()},
+            follow_redirects=True,
+            timeout=20,
+        ) as client:
+            response = client.get(
+                DDG_LITE_URL,
+                params={"q": f"{term} anime episodio online assistir"},
+            )
+            response.raise_for_status()
+    except httpx.HTTPError:
+        return []
+    soup = BeautifulSoup(response.text, "lxml")
+    links = soup.select("a.result-link") or soup.select("a[href]")
+    urls: list[str] = []
+    for link in links:
+        href = link.get("href") or ""
+        # redirect do lite: /l/?uddg=<url codificada> (pode vir sem esquema)
+        if "uddg=" in href:
+            decoded = parse_qs(urlparse(href).query).get("uddg", [""])[0]
+            if decoded:
+                urls.append(decoded)
+        elif href.startswith("http"):
+            urls.append(href)
+    return urls
 
 
 def _google_results(term: str) -> list[str]:
     """URLs de resultado da busca do Google (fallback quando o DDG nao retorna nada)."""
     try:
         with httpx.Client(
-            headers={"User-Agent": USER_AGENT},
+            headers={"User-Agent": current_user_agent()},
             follow_redirects=True,
             timeout=20,
         ) as client:
@@ -120,7 +160,7 @@ def discover_sites(term: str, conhecidos: list[str]) -> list[dict]:
         host = urlparse(entry).hostname or ""
         try:
             with httpx.Client(
-                headers={"User-Agent": USER_AGENT},
+                headers={"User-Agent": current_user_agent()},
                 follow_redirects=True,
                 timeout=15,
             ) as client:

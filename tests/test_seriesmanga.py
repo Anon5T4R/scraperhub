@@ -4,7 +4,7 @@ from app.scrapers.seriesmanga import SERIES_PATH_RE, SeriesMangaScraper
 
 SERIE = "https://asurascans.com/comics/surviving-the-game-as-a-barbarian-53fc8424"
 
-SERIES_HTML = f"""
+SERIES_HTML = """
 <html><body><main>
 <h1>Surviving The Game as a Barbarian</h1>
 <meta property="og:image" content="https://cdn.asurascans.com/capa.webp">

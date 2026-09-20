@@ -7,9 +7,9 @@ from urllib.parse import unquote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
-from .mangafire_parse import sanitize
 from .animestream_net import retry_call
+from .base import DOWNLOADS_DIR, USER_AGENT, ProgressCb, Scraper, ScraperError
+from .mangafire_parse import sanitize
 
 FILE_EXTS = (".zip", ".rar", ".7z", ".iso", ".tar", ".gz", ".mp4")
 DRIVE_ID_RE = re.compile(r"[-\w]{25,}")

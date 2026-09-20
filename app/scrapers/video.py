@@ -1,12 +1,23 @@
 """Scraper de video generico usando yt-dlp (API Python embutida no exe)."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError
 from .deps import ensure_ffmpeg
 from .animestream_net import SilentLogger
+
+# Patch de compatibilidade do extractor do Blogger (PR yt-dlp#17129) aplicado em
+# runtime. E opcional: se o yt-dlp mudar internamente o patch falha e o app
+# segue (o download cai no erro amigavel de sempre).
+try:
+    from ..vendor import apply_ytdlp_patches
+
+    apply_ytdlp_patches()
+except Exception as exc:  # nao derruba o app por causa de patch opcional
+    logging.getLogger(__name__).warning("Patch do yt-dlp (Blogger) nao aplicado: %s", exc)
 
 DRM_HINTS = ("drm", "protected", "widevine", "encrypted", "clearkey")
 MAX_PLAYLIST = 50

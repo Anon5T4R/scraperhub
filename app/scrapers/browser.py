@@ -11,7 +11,7 @@ from typing import Iterator
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
-from .base import USER_AGENT, ScraperError, app_root
+from .base import ScraperError, app_root, chromium_user_agent, set_current_user_agent
 
 VIEWPORT = {"width": 1366, "height": 900}
 
@@ -87,9 +87,13 @@ def run(
             browser = pw.chromium.launch(headless=headless)
         except Exception as exc:
             raise ScraperError(f"Nao foi possivel iniciar o Chromium: {exc}") from exc
+        # UA sincronizado com a versão REAL do Chromium em uso; vale para os
+        # clients httpx do processo (via current_user_agent) alem do contexto.
+        ua_sincronizado = chromium_user_agent(browser.version)
+        set_current_user_agent(ua_sincronizado)
         storage = str(state_path) if state_path and Path(state_path).is_file() else None
         context = browser.new_context(
-            user_agent=USER_AGENT,
+            user_agent=ua_sincronizado,
             locale="pt-BR",
             viewport=VIEWPORT,
             storage_state=storage,
@@ -100,6 +104,9 @@ def run(
             if state_path is not None:
                 try:
                     context.storage_state(path=str(state_path))
+                    # o arquivo carrega o cf_clearance (cookie sensivel):
+                    # restricao best effort (o Windows ignora parcialmente)
+                    os.chmod(state_path, 0o600)
                 except Exception:
                     pass  # nao salvar o estado nao pode derrubar o download
             context.close()

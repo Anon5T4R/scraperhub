@@ -11,15 +11,14 @@ from __future__ import annotations
 
 import re
 import time
-from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import DOWNLOADS_DIR, ProgressCb, Scraper, ScraperError, USER_AGENT
-from .mangafire_parse import image_extension, make_cbz, sanitize
 from .animestream_net import retry_call
+from .base import DOWNLOADS_DIR, USER_AGENT, ProgressCb, Scraper, ScraperError
+from .mangafire_parse import image_extension, make_cbz, sanitize
 
 # Config por host: como a pagina de serie/capitulo se parece.
 SITES: dict[str, dict[str, str]] = {
@@ -99,7 +98,6 @@ class SeriesMangaScraper(Scraper):
     def get_info(self, url: str) -> dict:
         series_url = self._series_url(url)
         host = (urlparse(series_url).hostname or "").lower().removeprefix("www.")
-        marker = SITES[host]["img_marker"]
         with httpx.Client(follow_redirects=True, timeout=30) as client:
             soup, final_url = self._fetch(client, series_url)
             # o site pode redirecionar p/ slug canônico (ex: -53fc8424):

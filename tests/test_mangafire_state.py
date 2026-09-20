@@ -1,4 +1,6 @@
 """Testes do manifesto de estado do mangafire (retomada sem rede)."""
+import shutil
+
 from app.scrapers.mangafire_state import (
     folder_pages,
     is_complete,
@@ -11,6 +13,51 @@ from app.scrapers.mangafire_state import (
 
 def test_load_state_ausente(tmp_path):
     assert load_state(tmp_path) == {"chapters": {}, "volumes": {}}
+
+
+def test_record_done_modo_so_cbz(tmp_path):
+    folder = tmp_path / "0001_Ch_1"
+    folder.mkdir()
+    (folder / "001.webp").write_bytes(b"x")
+    state = {"chapters": {}}
+    record_done(state, "abc", folder, cbz=True)
+    assert state["chapters"]["abc"]["cbz"] is True
+    assert state["chapters"]["abc"]["pages"] == 1  # contagem gravada antes de apagar
+
+
+def test_is_complete_so_cbz_pasta_apagada(tmp_path):
+    folder = tmp_path / "0001_Ch_1"
+    folder.mkdir()
+    (folder / "001.webp").write_bytes(b"x")
+    state = {"chapters": {}}
+    record_done(state, "abc", folder, cbz=True)
+    # cenario real: imagens apagadas apos o empacotamento, so o .cbz fica
+    (folder.parent / f"{folder.name}.cbz").write_bytes(b"zip")
+    shutil.rmtree(folder)
+    assert is_complete(state, "abc", folder)
+
+
+def test_is_complete_so_cbz_sem_arquivo(tmp_path):
+    folder = tmp_path / "0001_Ch_1"
+    folder.mkdir()
+    (folder / "001.webp").write_bytes(b"x")
+    state = {"chapters": {}}
+    record_done(state, "abc", folder, cbz=True)
+    shutil.rmtree(folder)
+    # .cbz sumiu (usuario apagou): item NAO esta completo, refaz o download
+    assert not is_complete(state, "abc", folder)
+
+
+def test_is_complete_modo_normal_ignora_cbz(tmp_path):
+    folder = tmp_path / "0001_Ch_1"
+    folder.mkdir()
+    (folder / "001.webp").write_bytes(b"x")
+    state = {"chapters": {}}
+    record_done(state, "abc", folder)  # sem cbz
+    (folder.parent / f"{folder.name}.cbz").write_bytes(b"zip")
+    shutil.rmtree(folder)
+    # item normal exige as paginas em disco: cbz ao lado nao conta
+    assert not is_complete(state, "abc", folder)
 
 
 def test_save_load_roundtrip(tmp_path):

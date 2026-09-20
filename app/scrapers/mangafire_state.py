@@ -13,6 +13,7 @@ uma vez e o manifesto e populado.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -52,6 +53,10 @@ def save_state(base: Path, state: dict) -> None:
         json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     tmp.replace(path)
+    try:
+        os.chmod(path, 0o600)  # best effort: o Windows ignora parcialmente
+    except OSError:
+        pass
 
 
 def folder_pages(folder: Path) -> int:
@@ -67,9 +72,19 @@ def is_complete(state: dict, chapter_id: str, folder: Path, section: str = "chap
     A pasta computada pode nao bater com a gravada (biblioteca antiga, quando
     o nome usava o indice da selecao): nesse caso a pasta registrada no
     manifesto e a fonte de verdade ate a migracao para o nome pelo numero.
+
+    Item gravado em modo so-CBZ (imagens apagadas apos o empacotamento): a
+    existencia do .cbz ao lado da pasta e a prova de conclusao.
     """
     entry = (state.get(section) or {}).get(str(chapter_id))
     if not isinstance(entry, dict) or not entry.get("done"):
+        return False
+    if entry.get("cbz"):
+        # pasta computada ou a registrada no manifesto: o .cbz fica ao lado
+        recorded = str(entry.get("folder") or "")
+        for base in (folder, folder.parent / recorded if recorded else folder):
+            if (base.parent / f"{base.name}.cbz").is_file():
+                return True
         return False
     expected = entry.get("pages")
     if not expected:
@@ -82,14 +97,28 @@ def is_complete(state: dict, chapter_id: str, folder: Path, section: str = "chap
     return folder_pages(folder.parent / recorded) == int(expected)
 
 
-def record_done(state: dict, chapter_id: str, folder: Path, section: str = "chapters") -> int:
-    """Marca o item como concluido no manifesto; devolve as paginas."""
+def record_done(
+    state: dict,
+    chapter_id: str,
+    folder: Path,
+    section: str = "chapters",
+    cbz: bool = False,
+) -> int:
+    """Marca o item como concluido no manifesto; devolve as paginas.
+
+    `cbz=True` registra o modo so-CBZ: as imagens avulsas serao apagadas
+    depois do empacotamento, entao a retomada confere o .cbz (ver
+    `is_complete`) em vez de contar paginas na pasta.
+    """
     pages = folder_pages(folder)
-    state.setdefault(section, {})[str(chapter_id)] = {
+    entry: dict = {
         "folder": folder.name,
         "pages": pages,
         "done": True,
     }
+    if cbz:
+        entry["cbz"] = True
+    state.setdefault(section, {})[str(chapter_id)] = entry
     return pages
 
 

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from app.scrapers.browser import download_binary
 from app.scrapers.base import ScraperError
+from app.scrapers.browser import download_binary
 
 
 class _FakeRequest:

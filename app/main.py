@@ -40,7 +40,7 @@ def _web_dir() -> Path:
 
 WEB_DIR = _web_dir()
 
-app = FastAPI(title="ScraperHub", version="1.9.4")
+app = FastAPI(title="ScraperHub", version="1.10.0")
 manager = TaskManager(max_workers=2)
 
 ALLOWED_HOSTS = ("127.0.0.1", "localhost")
@@ -140,6 +140,7 @@ class IpSwitchRequest(BaseModel):
 # Cache dos planos de montagem exibidos: o download reutiliza exatamente o
 # plano que o usuario aprovou (mesmas fontes/labels), sem re-propar a web.
 PLAN_TTL_S = 1800.0
+MAX_PLAN_CACHE = 20
 _plan_cache: dict[str, tuple[float, dict]] = {}
 _plan_lock = threading.Lock()
 
@@ -154,6 +155,10 @@ def _store_plan(key: str, plan: dict) -> None:
         expirados = [k for k, (when, _) in _plan_cache.items() if time.monotonic() - when > PLAN_TTL_S]
         for k in expirados:
             del _plan_cache[k]
+        # limite de entradas: descarta as mais antigas por timestamp
+        while len(_plan_cache) > MAX_PLAN_CACHE:
+            mais_antigo = min(_plan_cache, key=lambda k: _plan_cache[k][0])
+            del _plan_cache[mais_antigo]
 
 
 def _cached_plan(key: str) -> dict | None:
@@ -264,7 +269,8 @@ def _create_solve_task(payload: UrlRequest) -> str:
     def run(task_id: str) -> None:
         scraper.solve_challenge(url, _progress_reporter(task_id))
 
-    return manager.create(run, retry=retry)
+    # fila interativa: um download lento nao pode travar o modo assistido
+    return manager.create(run, retry=retry, queue="interactive")
 
 
 def _create_assemble_task(payload: AssembleDownloadRequest, full: bool) -> str:
@@ -327,7 +333,7 @@ def api_ip_switch_run() -> dict:
     def run(task_id: str) -> None:
         switch_ip(_progress_reporter(task_id))
 
-    return {"task_id": manager.create(run)}
+    return {"task_id": manager.create(run, queue="interactive")}
 
 
 @app.get("/api/tasks")
